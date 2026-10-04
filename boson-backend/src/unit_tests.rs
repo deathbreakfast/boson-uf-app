@@ -519,6 +519,69 @@ fn default_gluon_pool_rows_includes_global_happy_path() {
     assert_eq!(rows[0].id, "global");
 }
 
+fn pool_change(pool: &str) -> UpdateTaskConfigRequest {
+    UpdateTaskConfigRequest {
+        priority: None,
+        pool: Some(pool.to_string()),
+        retry_policy: None,
+    }
+}
+
+fn pion_offered() -> Vec<GluonPoolPickRow> {
+    let mut rows = default_gluon_pool_rows();
+    rows.push(GluonPoolPickRow {
+        id: "boson-mve-a".to_string(),
+        label: "boson-mve-a".to_string(),
+        detail: "Boson workers on the MVE cell".to_string(),
+    });
+    rows
+}
+
+#[test]
+fn validate_pool_offered_accepts_offered_pool_happy_path() {
+    let offered = pion_offered();
+    assert_eq!(
+        validate_pool_offered(&pool_change(" boson-mve-a "), "global", &offered),
+        Ok(())
+    );
+    let unchanged = UpdateTaskConfigRequest {
+        priority: Some(3),
+        pool: None,
+        retry_policy: None,
+    };
+    assert_eq!(
+        validate_pool_offered(&unchanged, "global", &offered),
+        Ok(())
+    );
+}
+
+#[test]
+fn reject_unknown_pool_id() {
+    let offered = pion_offered();
+    for pool in ["boson-mve-b", "general", "GLOBAL"] {
+        assert_eq!(
+            validate_pool_offered(&pool_change(pool), "global", &offered),
+            Err(BosonInputError::UnknownPool),
+            "{pool}"
+        );
+    }
+    assert!(BosonInputError::UnknownPool
+        .to_string()
+        .starts_with("Invalid task config update:"));
+}
+
+#[test]
+fn validate_pool_offered_keeps_retired_current_pool_sad() {
+    assert_eq!(
+        validate_pool_offered(
+            &pool_change("retired-pool"),
+            "retired-pool",
+            &pion_offered()
+        ),
+        Ok(())
+    );
+}
+
 #[test]
 fn clamp_page_list_limit_caps_oversized_sad() {
     assert_eq!(clamp_page_list_limit(10_000), MAX_PAGE_LIST_LIMIT);

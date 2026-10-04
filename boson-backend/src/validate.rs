@@ -211,6 +211,8 @@ pub enum BosonInputError {
     PriorityOutOfRange,
     /// Pool string was blank, oversized, or path-unsafe.
     InvalidPool,
+    /// Pool is well formed but the host does not offer it, so no worker drains it.
+    UnknownPool,
     /// Retry `max_attempts` was zero or above [`MAX_RETRY_ATTEMPTS`].
     InvalidMaxAttempts,
     /// Retry delay fields exceeded [`MAX_RETRY_DELAY_MS`].
@@ -234,6 +236,10 @@ impl std::fmt::Display for BosonInputError {
                 f,
                 "Invalid task config update: pool must be a non-empty path-safe name"
             ),
+            Self::UnknownPool => write!(
+                f,
+                "Invalid task config update: pool is not offered by this host"
+            ),
             Self::InvalidMaxAttempts => write!(
                 f,
                 "Invalid task config update: max_attempts must be between 1 and {MAX_RETRY_ATTEMPTS}"
@@ -251,6 +257,51 @@ impl std::fmt::Display for BosonInputError {
 }
 
 impl std::error::Error for BosonInputError {}
+
+/// Checks a requested pool change against the pools the host offers.
+///
+/// Keeping the task's current pool always passes, so a config saved before
+/// a pool was retired can still have its priority or retry policy edited.
+/// Run [`validate_task_config_update`] first for shape checks.
+///
+/// # Errors
+///
+/// [`BosonInputError::UnknownPool`] when `req.pool` names a pool that is
+/// neither `current_pool` nor in `offered`.
+///
+/// # Examples
+///
+/// ```
+/// use boson_backend::{
+///     default_gluon_pool_rows, validate_pool_offered, BosonInputError, UpdateTaskConfigRequest,
+/// };
+///
+/// let offered = default_gluon_pool_rows();
+/// let req = |pool: &str| UpdateTaskConfigRequest {
+///     priority: None,
+///     pool: Some(pool.into()),
+///     retry_policy: None,
+/// };
+/// assert!(validate_pool_offered(&req("global"), "global", &offered).is_ok());
+/// assert_eq!(
+///     validate_pool_offered(&req("gpu"), "global", &offered),
+///     Err(BosonInputError::UnknownPool)
+/// );
+/// ```
+pub fn validate_pool_offered(
+    req: &crate::types::UpdateTaskConfigRequest,
+    current_pool: &str,
+    offered: &[crate::types::GluonPoolPickRow],
+) -> Result<(), BosonInputError> {
+    let Some(pool) = req.pool.as_deref().map(str::trim) else {
+        return Ok(());
+    };
+    if pool == current_pool || offered.iter().any(|row| row.id == pool) {
+        Ok(())
+    } else {
+        Err(BosonInputError::UnknownPool)
+    }
+}
 
 /// Operator-facing error when task config cannot be loaded (fail closed).
 ///

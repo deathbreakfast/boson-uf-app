@@ -213,7 +213,7 @@ pub const fn dashboard_stats(
     }
 }
 
-/// Default Gluon pool picker row used until Wave 7 integration lands.
+/// Picker rows when the host provides no [`crate::BosonPoolProvider`]: `global` only.
 #[must_use]
 pub fn default_gluon_pool_rows() -> Vec<crate::types::GluonPoolPickRow> {
     vec![crate::types::GluonPoolPickRow {
