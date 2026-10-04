@@ -349,6 +349,32 @@ pub fn e2e_boson_backend() -> Arc<dyn BosonCoordinatorBackend> {
     Arc::clone(&state().boson_backend)
 }
 
+/// Extra pool the E2E picker offers next to `global`.
+pub const E2E_POOL: &str = "e2e-pool-a";
+
+struct E2ePools;
+
+impl boson_app::BosonPoolProvider for E2ePools {
+    fn pools(&self) -> Vec<boson_app::GluonPoolPickRow> {
+        vec![
+            boson_app::GluonPoolPickRow {
+                id: "global".to_string(),
+                label: "global (default)".to_string(),
+                detail: "Default pool every worker drains.".to_string(),
+            },
+            boson_app::GluonPoolPickRow {
+                id: E2E_POOL.to_string(),
+                label: E2E_POOL.to_string(),
+                detail: "Pool a host pins dedicated Boson workers to.".to_string(),
+            },
+        ]
+    }
+}
+
+pub fn e2e_pool_provider() -> Arc<dyn boson_app::BosonPoolProvider> {
+    Arc::new(E2ePools)
+}
+
 pub fn e2e_fixtures() -> FixtureIds {
     state().fixtures.lock().expect("fixtures").clone()
 }

@@ -180,6 +180,18 @@ pub struct GluonPoolPickRow {
     pub detail: String,
 }
 
+/// Pools a host offers in the task-config picker.
+///
+/// Hosts that place Boson workers in Pion pools provide an
+/// `Arc<dyn BosonPoolProvider>` in Leptos request context; without one the
+/// picker offers [`crate::default_gluon_pool_rows`]. `pools` runs on every
+/// picker load and every pool change, so return a cached snapshot rather than
+/// querying storage under the caller's session.
+pub trait BosonPoolProvider: Send + Sync {
+    /// Pools workers drain, `global` included when the host offers it.
+    fn pools(&self) -> Vec<GluonPoolPickRow>;
+}
+
 /// Page size used by the tasks infinite scroll / `DataTable`.
 pub const TASKS_PAGE_SIZE: u32 = 20;
 /// Page size used by the jobs/queue infinite scroll / `DataTable`.

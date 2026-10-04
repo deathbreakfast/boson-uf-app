@@ -225,16 +225,16 @@ pub use page_query::{
     quick_search_text, resolve_job_filter, run_status_key,
 };
 pub use types::{
-    clamp_page_list_limit, DashboardChartPoint, DashboardChartSeries, DashboardStats,
-    GluonPoolPickRow, JobStatusDto, JobSummary, RetryPolicyDto, RunStatusDto, RunSummary,
-    TaskConfigDto, TaskSummary, UpdateTaskConfigRequest, BOSON_LIST_FETCH_CAP, JOBS_PAGE_SIZE,
-    MAX_PAGE_LIST_LIMIT, RUNS_PAGE_SIZE, TASKS_PAGE_SIZE,
+    clamp_page_list_limit, BosonPoolProvider, DashboardChartPoint, DashboardChartSeries,
+    DashboardStats, GluonPoolPickRow, JobStatusDto, JobSummary, RetryPolicyDto, RunStatusDto,
+    RunSummary, TaskConfigDto, TaskSummary, UpdateTaskConfigRequest, BOSON_LIST_FETCH_CAP,
+    JOBS_PAGE_SIZE, MAX_PAGE_LIST_LIMIT, RUNS_PAGE_SIZE, TASKS_PAGE_SIZE,
 };
 pub use validate::{
     boson_run_path, boson_runs_job_filter_path, boson_task_config_path, boson_task_path,
-    encode_ops_path_segment, format_task_config_load_error, validate_job_id, validate_range_secs,
-    validate_run_id, validate_task_config_update, validate_task_name, BosonIdError,
-    BosonInputError, MAX_BOSON_ID_CHARS, MAX_POOL_NAME_CHARS, MAX_RETRY_ATTEMPTS,
+    encode_ops_path_segment, format_task_config_load_error, validate_job_id, validate_pool_offered,
+    validate_range_secs, validate_run_id, validate_task_config_update, validate_task_name,
+    BosonIdError, BosonInputError, MAX_BOSON_ID_CHARS, MAX_POOL_NAME_CHARS, MAX_RETRY_ATTEMPTS,
     MAX_RETRY_DELAY_MS, MAX_TASK_PRIORITY, MIN_TASK_PRIORITY, RANGE_SECS_24H, RANGE_SECS_7D,
 };
 

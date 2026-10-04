@@ -18,6 +18,14 @@ pub(super) fn boson_backend(
         .ok_or_else(|| ServerFnError::new("Boson backend not in request context"))
 }
 
+/// Pools the host offers: the context [`boson_backend::BosonPoolProvider`], or
+/// [`boson_backend::default_gluon_pool_rows`] when the host supplies none.
+#[cfg(feature = "ssr")]
+pub(super) fn offered_pools() -> Vec<boson_backend::GluonPoolPickRow> {
+    leptos::context::use_context::<std::sync::Arc<dyn boson_backend::BosonPoolProvider>>()
+        .map_or_else(boson_backend::default_gluon_pool_rows, |p| p.pools())
+}
+
 /// Require an authenticated session (`SessionSnapshot` / `session_user_id`).
 ///
 /// `SessionSnapshot` does not carry `email_verified`; use

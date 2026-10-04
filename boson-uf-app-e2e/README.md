@@ -27,5 +27,5 @@ Site: `http://127.0.0.1:3170` · seed: `POST /api/test/seed-data`
 | `pw-boson-dashboard-*` | KPI / seeded task visible |
 | `pw-boson-tasks-*` | List→detail; unknown task empty |
 | `pw-boson-queue-cancel-*` | Admin cancel; non-admin denied |
-| `pw-boson-task-config-*` | Unverified blocked; admin save |
+| `pw-boson-task-config-*` | Unverified blocked; admin save; host pool provider rows offered and a picked pool persists |
 | `pw-boson-runs-*` | List→detail; unknown run |

@@ -108,6 +108,8 @@ pub async fn update_task_config(
             .get_task_config(&task_name)
             .await
             .map_err(|e| ServerFnError::new(format!("Task config not found: {e}")))?;
+        boson_backend::validate_pool_offered(&req, &config.pool, &super::helpers::offered_pools())
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
 
         apply_task_config_update(&mut config, &req, chrono::Utc::now());
         backend
