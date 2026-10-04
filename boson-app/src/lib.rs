@@ -254,8 +254,8 @@ pub use server::{
     cancel_job, get_dashboard_stats, get_run, get_run_stats_series, get_task, get_task_config,
     get_tasks, get_tasks_datatable_page, get_tasks_page, list_gluon_pools_for_boson_task_config,
     list_jobs_datatable_page, list_jobs_page, list_runs_datatable_page, list_runs_page,
-    update_task_config, DashboardStats, JobSummary, RunSummary, TaskConfigDto, TaskSummary,
-    BOSON_ADMIN_PERMISSION,
+    update_task_config, BosonPoolProvider, DashboardStats, GluonPoolPickRow, JobSummary,
+    RunSummary, TaskConfigDto, TaskSummary, BOSON_ADMIN_PERMISSION,
 };
 
 uf_app! {

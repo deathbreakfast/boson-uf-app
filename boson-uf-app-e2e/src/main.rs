@@ -8,8 +8,8 @@ use axum::routing::{get, post};
 use axum::Router;
 use boson_uf_app_e2e::seed::seed_data;
 use boson_uf_app_e2e::{
-    e2e_boson_backend, e2e_higgs_config, e2e_router, init_e2e_valence, inject_e2e_session_snapshot,
-    shell, wire_gauge_permissions_bridge, App,
+    e2e_boson_backend, e2e_higgs_config, e2e_pool_provider, e2e_router, init_e2e_valence,
+    inject_e2e_session_snapshot, shell, wire_gauge_permissions_bridge, App,
 };
 use leptos::config::get_configuration;
 use leptos::prelude::provide_context;
@@ -48,6 +48,7 @@ async fn serve() -> anyhow::Result<()> {
     let leptos_options_state = leptos_options.clone();
     let higgs = e2e_higgs_config();
     let boson = e2e_boson_backend();
+    let pools = e2e_pool_provider();
     let router = e2e_router();
 
     let app = Router::new()
@@ -61,6 +62,7 @@ async fn serve() -> anyhow::Result<()> {
             move || {
                 provide_context::<std::sync::Arc<higgs::HiggsConfig>>(higgs.clone());
                 provide_context(boson.clone());
+                provide_context(pools.clone());
                 wire_gauge_permissions_bridge();
             },
             move || shell(leptos_options_for_routes.clone()),

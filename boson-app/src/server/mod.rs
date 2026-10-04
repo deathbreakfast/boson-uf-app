@@ -23,7 +23,8 @@
 //! - Context: `Boson backend not in request context`
 //! - Id validation: [`boson_backend::BosonIdError`] Display text
 //! - Range: `Invalid range_secs:…` ([`boson_backend::BosonInputError`])
-//! - Config update: `Invalid task config update:…`
+//! - Config update: `Invalid task config update:…` (including a pool the host's
+//!   [`boson_backend::BosonPoolProvider`] does not offer)
 //! - Config load: `Failed to load task config:…` / `Task config not found:…`
 //! - Mutators: `Failed to cancel job:…` / `Failed to update config:…`
 //!
