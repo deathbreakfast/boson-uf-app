@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use boson_backend::JobsTab;
 use leptos::prelude::*;
 use leptos::task::spawn_local_scoped;
+#[cfg(feature = "ssr")]
 use leptos_router::components::Redirect;
 use leptos_router::hooks::{use_navigate, use_query_map};
 use leptos_router::NavigateOptions;
@@ -29,9 +30,29 @@ use copy::cancel_success;
 use failed::FailedJobsPanel;
 
 /// `/boson/queue`, the page's old address: sends people to Jobs.
+///
+/// The server render asks for a redirect (hosts that honor it answer with `Location`), and
+/// the browser replaces the URL once the page hydrates, so the old address works either way.
 #[component]
 pub fn BosonQueueRedirect() -> impl IntoView {
-    view! { <Redirect path=crate::paths::JOBS /> }
+    let navigate = use_navigate();
+    Effect::new(move |_| {
+        navigate(
+            crate::paths::JOBS,
+            NavigateOptions {
+                replace: true,
+                ..NavigateOptions::default()
+            },
+        );
+    });
+    #[cfg(feature = "ssr")]
+    {
+        view! { <Redirect path=crate::paths::JOBS /> }.into_any()
+    }
+    #[cfg(not(feature = "ssr"))]
+    {
+        ().into_any()
+    }
 }
 
 /// The tab in the URL (`?tab=`), and the tab list's selection kept in step with it both ways.

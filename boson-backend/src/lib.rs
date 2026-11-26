@@ -20,7 +20,8 @@
 //!   [`encode_ops_path_segment`], [`boson_task_path`], [`boson_run_path`], and related
 //!   helpers.
 //! - **`DataTable` query adapters** — Supports status and quick-search filters for queue and
-//!   run tables via [`apply_jobs_datatable_query`] and [`apply_runs_datatable_query`].
+//!   run tables by building coordinator filters via [`job_filter_from_request`] and
+//!   [`run_filter_from_request`].
 //! - **Cursor paging** — Decides whether a jobs or runs table request pages by keyset cursor
 //!   or by offset, and builds the page with its `next_cursor`, via [`jobs_list_start`],
 //!   [`jobs_page_from_rows`], [`runs_list_start`], and [`runs_page_from_rows`].

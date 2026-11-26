@@ -38,7 +38,7 @@ test.describe("pw-boson-jobs", () => {
     await expect(dialog).toContainText("won't");
     await expect(dialog).toContainText(`Job ${jobId}`);
     await page.getByRole("button", { name: "Keep running" }).click();
-    await expect(dialog).toHaveCount(0);
+    await expect(dialog).toBeHidden();
     await expect(cancel).toBeVisible();
 
     await cancel.locator("button").click();

@@ -3,10 +3,25 @@ use crate::components::{
 };
 use crate::server::list_task_names;
 use leptos::prelude::*;
+use leptos::task::spawn_local_scoped;
 use leptos_router::hooks::{use_navigate, use_query_map};
 use leptos_router::NavigateOptions;
 use orbital::components::{Caption1, Card, ContentContainer, SpacingSize, Tag, Title3};
 use orbital::primitives::{Button, ButtonAppearance, ButtonSize, Flex, FlexAlign};
+
+/// Registered task names for the task Select, loaded in the browser after hydration.
+///
+/// The Select works before they arrive, and a resource read outside a Suspense would stall
+/// the server render.
+fn use_task_names() -> Signal<Vec<String>> {
+    let task_names = RwSignal::new(Vec::<String>::new());
+    Effect::new(move |_| {
+        spawn_local_scoped(async move {
+            task_names.set(list_task_names().await.unwrap_or_default());
+        });
+    });
+    task_names.into()
+}
 
 /// Run history index: paginated list of past runs across all tasks.
 ///
@@ -59,8 +74,7 @@ pub fn BosonRunsIndexPage() -> impl IntoView {
         });
     });
 
-    let task_names = LocalResource::new(|| async { list_task_names().await.unwrap_or_default() });
-    let task_names = Signal::derive(move || task_names.get().unwrap_or_default());
+    let task_names = use_task_names();
 
     let empty_description = Memo::new(move |_| {
         if job_filter.get().is_some() {
