@@ -441,6 +441,91 @@ pub async fn seed_paging_jobs() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Failed jobs and runs one failed-jobs spec seeds; fresh ids on every call.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct FailedSeed {
+    /// Failed job ids, oldest first.
+    pub job_ids: Vec<String>,
+    /// The failed run of each job, in the same order.
+    pub run_ids: Vec<String>,
+    /// Each job's arguments summary as the Jobs table shows it.
+    pub args: Vec<String>,
+}
+
+/// Error every seeded failed run ends with, so Retry warns that it may repeat.
+pub const E2E_FAILED_ERROR: &str = "Ledger API refused the token (401)";
+
+/// Upsert two failed jobs that used all three attempts, each with its failed last run.
+pub async fn seed_failed_jobs() -> anyhow::Result<FailedSeed> {
+    let queue = e2e_queue();
+    let mut seed = FailedSeed {
+        job_ids: Vec::new(),
+        run_ids: Vec::new(),
+        args: Vec::new(),
+    };
+    for i in 0..2 {
+        let batch = format!("batch-{}", &uuid_suffix()[..8]);
+        let mut job = Job::new(
+            E2E_TASK_NAME,
+            serde_json::json!({"User": {"user_id": "admin"}}),
+            serde_json::json!({"batch": batch}),
+            0,
+            "global",
+            0,
+            None,
+        );
+        job.status = JobStatus::Failed;
+        job.attempt = 3;
+        job.created_at = Utc::now() + chrono::Duration::milliseconds(i);
+        queue.upsert_job(&job).await?;
+        let mut run = Run::new(&job.job_id, E2E_TASK_NAME, 3);
+        run.status = RunStatus::Failed;
+        run.finished_at = Some(Utc::now());
+        run.duration_ms = Some(30_000);
+        run.error_message = Some(E2E_FAILED_ERROR.to_string());
+        queue.upsert_run(&run).await?;
+        seed.args.push(format!("batch {batch}"));
+        seed.job_ids.push(job.job_id);
+        seed.run_ids.push(run.run_id);
+    }
+    Ok(seed)
+}
+
+/// Runs the Runs filter spec looks for; fresh ids on every call.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RunsSeed {
+    /// A failed run that started just now.
+    pub recent_failed_run_id: String,
+    /// A successful run that started three days ago.
+    pub old_run_id: String,
+}
+
+/// Upsert a failed run from now and a successful run from three days ago.
+pub async fn seed_filter_runs() -> anyhow::Result<RunsSeed> {
+    let queue = e2e_queue();
+    let job_id = e2e_fixtures().job_id;
+    let mut recent = Run::new(&job_id, E2E_TASK_NAME, 1);
+    recent.status = RunStatus::Failed;
+    recent.finished_at = Some(Utc::now());
+    recent.duration_ms = Some(1_800);
+    recent.error_message = Some("e2e filter run".to_string());
+    queue.upsert_run(&recent).await?;
+    let mut old = Run::new(&job_id, E2E_TASK_NAME, 1);
+    old.status = RunStatus::Success;
+    old.started_at = Utc::now() - chrono::Duration::days(3);
+    old.finished_at = Some(old.started_at + chrono::Duration::seconds(2));
+    old.duration_ms = Some(2_000);
+    queue.upsert_run(&old).await?;
+    Ok(RunsSeed {
+        recent_failed_run_id: recent.run_id,
+        old_run_id: old.run_id,
+    })
+}
+
+fn uuid_suffix() -> String {
+    Run::new("x", "x", 1).run_id.replace('-', "")
+}
+
 pub fn e2e_system_valence() -> Valence {
     Valence::builder()
         .database_router(e2e_router())

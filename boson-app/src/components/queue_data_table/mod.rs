@@ -4,28 +4,35 @@ mod mapper;
 
 use std::collections::HashSet;
 
+use boson_backend::JobsTab;
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 use leptos_router::NavigateOptions;
 use orbital::components::{EmptyState, MessageBar, MessageBarIntent};
 use orbital::primitives::{
     DataTable, DataTableEmptyView, DataTableEvents, DataTableFeatures, DataTableHeaderChromeConfig,
-    DataTableNoResultsView, DataTableSource, DataTableToolbarConfig, PagingMode,
+    DataTableLoadingView, DataTableLocale, DataTableNoResultsView, DataTableSource,
+    DataTableToolbarConfig, PagingMode,
 };
 
-use crate::components::BosonDataTableShell;
+use crate::components::{BosonDataTableShell, BosonDataTableSkeletonRows};
 
-use columns::queue_table_columns;
-use fetcher::{build_queue_fetcher, QUEUE_TABLE_PAGE_SIZE};
+pub use columns::{failed_table_columns, FAILED_TABLE_COLUMNS};
+use columns::{queue_table_columns, JOBS_TABLE_COLUMNS};
+pub use fetcher::{build_jobs_fetcher, JobRows, QUEUE_TABLE_PAGE_SIZE};
 
-/// Queue jobs DataTable with status filter and cancel actions.
+/// Jobs DataTable for the Active or Finished tab, with search, a status filter and Cancel.
 #[component]
-pub fn QueueDataTable(
-    /// Reactive signal for the cancel pending.
+pub fn JobsDataTable(
+    /// Which tab the table lists (Active or Finished).
+    tab: JobsTab,
+    /// Rows loaded so far, by job id; the fetcher fills it.
+    rows: JobRows,
+    /// Ids of jobs with a cancel in flight.
     cancel_pending: ReadSignal<HashSet<String>>,
-    /// Callback invoked when the action is cancelled.
+    /// Called with a job id when its Cancel button is pressed.
     on_cancel: Callback<String>,
-    /// Optional refresh signal.
+    /// Bump to reload the rows in place.
     #[prop(optional)]
     refresh_signal: Option<Signal<u32>>,
 ) -> impl IntoView {
@@ -39,60 +46,69 @@ pub fn QueueDataTable(
     });
 
     let data_source = DataTableSource::Server {
-        fetcher: build_queue_fetcher(),
+        fetcher: build_jobs_fetcher(tab, rows),
         page_size: QUEUE_TABLE_PAGE_SIZE,
     };
 
-    let table_refresh = refresh_signal.unwrap_or_else(|| Signal::derive(|| 0u32));
+    let (empty_message, empty_description) = match tab {
+        JobsTab::Finished => (
+            "No finished jobs",
+            "Jobs that succeed or are canceled show up here.",
+        ),
+        _ => (
+            "Nothing waiting",
+            "Every job has been picked up. Finished jobs are under Finished.",
+        ),
+    };
+
+    let locale = DataTableLocale {
+        quick_search_placeholder: "Search by job id".to_string(),
+        ..DataTableLocale::default()
+    };
 
     view! {
-        <BosonDataTableShell data_testid="boson-queue-data-table">
-            <div data-testid="queue-status-filter">
-                {move || {
-                    let _refresh = table_refresh.get();
-                    view! {
-                        <DataTable
-                            data_source=data_source.clone()
-                            paging=PagingMode::Paged
-                            flex=true
-                            features=DataTableFeatures::MULTI_FILTER
-                            columns=queue_table_columns(cancel_pending, on_cancel)
-                            sortable=false
-                            toolbar_config=DataTableToolbarConfig {
-                                quick_search: true,
-                                // P7: filter panel motion deferred — DataTableFilterPanel owns Popover
-                                // internally; track upstream orbital-datagrid filter/Popover motion hook.
-                                filter_panel: true,
-                                column_picker: false,
-                                pivot: false,
-                                export_menu: false,
-                            }
-                            header_chrome=DataTableHeaderChromeConfig {
-                                column_menu: false,
-                                column_filter_button: false,
-                                column_hide: false,
-                                show_table_grid: true,
-                            }
-                            events=DataTableEvents {
-                                on_row_click: Some(on_row_click),
-                                ..Default::default()
-                            }
-                        >
-                            <DataTableEmptyView slot>
-                                <EmptyState
-                                    message="No jobs"
-                                    description="Jobs will appear here when tasks are enqueued."
-                                />
-                            </DataTableEmptyView>
-                            <DataTableNoResultsView slot>
-                                <MessageBar intent=MessageBarIntent::Info>
-                                    "No jobs match your search or filters."
-                                </MessageBar>
-                            </DataTableNoResultsView>
-                        </DataTable>
-                    }
-                }}
-            </div>
+        <BosonDataTableShell data_testid="boson-jobs-data-table">
+            <DataTable
+                data_source=data_source
+                paging=PagingMode::Paged
+                flex=true
+                features=DataTableFeatures::MULTI_FILTER
+                columns=queue_table_columns(cancel_pending, on_cancel)
+                sortable=false
+                locale=locale
+                refresh_signal=refresh_signal.unwrap_or_else(|| Signal::derive(|| 0u32))
+                toolbar_config=DataTableToolbarConfig {
+                    quick_search: true,
+                    // P7: filter panel motion deferred — DataTableFilterPanel owns Popover
+                    // internally; track upstream orbital-datagrid filter/Popover motion hook.
+                    filter_panel: true,
+                    column_picker: false,
+                    pivot: false,
+                    export_menu: false,
+                }
+                header_chrome=DataTableHeaderChromeConfig {
+                    column_menu: false,
+                    column_filter_button: false,
+                    column_hide: false,
+                    show_table_grid: true,
+                }
+                events=DataTableEvents {
+                    on_row_click: Some(on_row_click),
+                    ..Default::default()
+                }
+            >
+                <DataTableLoadingView slot>
+                    <BosonDataTableSkeletonRows columns=JOBS_TABLE_COLUMNS />
+                </DataTableLoadingView>
+                <DataTableEmptyView slot>
+                    <EmptyState message=empty_message description=empty_description />
+                </DataTableEmptyView>
+                <DataTableNoResultsView slot>
+                    <MessageBar intent=MessageBarIntent::Info>
+                        "No jobs match your search or filters."
+                    </MessageBar>
+                </DataTableNoResultsView>
+            </DataTable>
         </BosonDataTableShell>
     }
 }

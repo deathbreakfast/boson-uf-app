@@ -2,8 +2,9 @@
 
 use leptos::prelude::*;
 
+/// Most runs the trend chart reads (the cap the list pages used before they paged by cursor).
 #[cfg(feature = "ssr")]
-use super::types::BOSON_LIST_FETCH_CAP;
+const RUN_STATS_FETCH_CAP: usize = 50_000;
 use super::types::{DashboardChartSeries, DashboardStats};
 
 #[cfg(feature = "ssr")]
@@ -64,7 +65,7 @@ pub async fn get_run_stats_series(
         let backend = backend.as_ref();
 
         let now = chrono::Utc::now();
-        let runs = backend.list_runs(None, 0, BOSON_LIST_FETCH_CAP).await;
+        let runs = backend.list_runs(None, 0, RUN_STATS_FETCH_CAP).await;
         Ok(boson_backend::run_stats_series_from_runs(
             &runs, now, range_secs,
         ))

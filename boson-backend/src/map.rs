@@ -85,13 +85,64 @@ pub fn parse_job_status_filter(s: &str) -> Option<JobStatus> {
 /// Maps a core [`Job`] onto a list-row [`JobSummary`].
 #[must_use]
 pub fn job_to_summary(j: Job) -> JobSummary {
+    let waited_ms = (Utc::now() - j.created_at).num_milliseconds().max(0);
     JobSummary {
+        args_summary: args_summary(&j.params_json),
         job_id: j.job_id,
         task_name: j.task_name,
         status: job_status_to_dto(j.status),
         priority: j.priority,
         pool: j.pool,
         created_at: j.created_at.to_rfc3339(),
+        waited_ms,
+        attempt: j.attempt,
+        max_attempts: None,
+        last_error: None,
+        failed_at: None,
+    }
+}
+
+/// Longest param value [`args_summary`] shows before cutting it with "…".
+pub const ARGS_SUMMARY_VALUE_CHARS: usize = 24;
+
+/// Short label for a job's params: the first two as `key value`, joined with " · ".
+///
+/// Strings longer than [`ARGS_SUMMARY_VALUE_CHARS`] end in "…", objects read `{…}` and arrays
+/// `[n]`. Params that aren't an object show as one shortened value; an empty object is "".
+///
+/// ```
+/// use boson_backend::args_summary;
+/// use serde_json::json;
+///
+/// assert_eq!(args_summary(&json!({"asset": 7781, "sizes": [1, 2, 3]})), "asset 7781 · sizes [3]");
+/// assert_eq!(args_summary(&json!({})), "");
+/// ```
+#[must_use]
+pub fn args_summary(params: &serde_json::Value) -> String {
+    match params {
+        serde_json::Value::Object(map) => map
+            .iter()
+            .take(2)
+            .map(|(k, v)| format!("{k} {}", short_value(v)))
+            .collect::<Vec<_>>()
+            .join(" · "),
+        serde_json::Value::Null => String::new(),
+        other => short_value(other),
+    }
+}
+
+fn short_value(v: &serde_json::Value) -> String {
+    let text = match v {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Object(_) => return "{…}".to_string(),
+        serde_json::Value::Array(items) => return format!("[{}]", items.len()),
+        other => other.to_string(),
+    };
+    if text.chars().count() > ARGS_SUMMARY_VALUE_CHARS {
+        let cut: String = text.chars().take(ARGS_SUMMARY_VALUE_CHARS - 1).collect();
+        format!("{cut}…")
+    } else {
+        text
     }
 }
 
@@ -108,6 +159,7 @@ pub fn run_to_summary(r: Run) -> RunSummary {
         finished_at: r.finished_at.map(|dt| dt.to_rfc3339()),
         duration_ms: r.duration_ms,
         error_message: r.error_message,
+        max_attempts: None,
     }
 }
 

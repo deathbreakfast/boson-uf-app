@@ -41,6 +41,8 @@ fn sample_job(id: &str, task: &str, status: JobStatus) -> Job {
         created_at: Utc::now(),
         signature_hash: 0,
         attempt: 1,
+        retried_from: None,
+        dropped_at: None,
     }
 }
 

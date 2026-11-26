@@ -8,16 +8,36 @@ export type SeedFixtures = {
   run_id: string;
 };
 
+/** Two failed jobs (all three attempts used), with their failed runs. */
+export type FailedSeed = {
+  job_ids: string[];
+  run_ids: string[];
+  args: string[];
+};
+
+/** A failed run from just now and a successful run from three days ago. */
+export type RunsSeed = {
+  recent_failed_run_id: string;
+  old_run_id: string;
+};
+
 export async function seedAuth(
   page: Page,
   auth: SeedAuthKind,
-  opts?: { refreshJob?: boolean; pagingJobs?: boolean },
+  opts?: {
+    refreshJob?: boolean;
+    pagingJobs?: boolean;
+    failedJobs?: boolean;
+    filterRuns?: boolean;
+  },
 ) {
   const res = await page.request.post("/api/test/seed-data", {
     data: {
       auth,
       refresh_job: opts?.refreshJob ?? false,
       paging_jobs: opts?.pagingJobs ?? false,
+      failed_jobs: opts?.failedJobs ?? false,
+      filter_runs: opts?.filterRuns ?? false,
     },
   });
   expect(res.ok()).toBeTruthy();
@@ -25,7 +45,14 @@ export async function seedAuth(
     ok: boolean;
     auth: string;
     fixtures: SeedFixtures;
+    failed: FailedSeed | null;
+    runs: RunsSeed | null;
   }>;
+}
+
+/** The last four characters of an id, as the tables show it after "…". */
+export function shortId(id: string) {
+  return `…${id.slice(-4)}`;
 }
 
 async function bootState(page: Page): Promise<"ready" | "error" | "loading"> {

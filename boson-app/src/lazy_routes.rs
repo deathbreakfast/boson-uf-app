@@ -8,7 +8,7 @@ use leptos::prelude::*;
 use leptos_router::{lazy_route, LazyRoute};
 
 use crate::{
-    BosonLayout, BosonQueuePage, BosonRootPage, BosonRunDetailPage, BosonRunsIndexPage,
+    BosonJobsPage, BosonLayout, BosonRootPage, BosonRunDetailPage, BosonRunsIndexPage,
     BosonTaskConfigPage, BosonTaskDetailPage, BosonTasksIndexPage,
 };
 
@@ -88,18 +88,18 @@ impl LazyRoute for BosonVerifiedTaskConfigRoute {
     }
 }
 
-/// Lazy `/boson/queue`.
+/// Lazy `/boson/jobs`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct BosonQueueRoute;
+pub struct BosonJobsRoute;
 
 #[lazy_route]
-impl LazyRoute for BosonQueueRoute {
+impl LazyRoute for BosonJobsRoute {
     fn data() -> Self {
         Self
     }
 
     fn view(_this: Self) -> AnyView {
-        view! { <BosonQueuePage /> }.into_any()
+        view! { <BosonJobsPage /> }.into_any()
     }
 }
 

@@ -4,7 +4,10 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 
-use crate::e2e_valence::{e2e_fixtures, refresh_queue_job, seed_paging_jobs, store_fixtures};
+use crate::e2e_valence::{
+    e2e_fixtures, refresh_queue_job, seed_failed_jobs, seed_filter_runs, seed_paging_jobs,
+    store_fixtures,
+};
 use crate::gate_demos::{write_e2e_auth_kind, E2eAuthKind};
 
 #[derive(Debug, Deserialize)]
@@ -18,6 +21,12 @@ pub struct SeedRequest {
     /// When true, upsert the jobs the jobs-table paging spec pages through.
     #[serde(default)]
     pub paging_jobs: bool,
+    /// When true, upsert two failed jobs (with failed runs) for the failed-jobs spec.
+    #[serde(default)]
+    pub failed_jobs: bool,
+    /// When true, upsert a recent failed run and a three-day-old run for the Runs spec.
+    #[serde(default)]
+    pub filter_runs: bool,
 }
 
 fn default_auth() -> String {
@@ -60,8 +69,27 @@ pub async fn seed_data(
         })?;
     }
 
+    let failed = if body.failed_jobs {
+        Some(seed_failed_jobs().await.map_err(|e| {
+            log::error!("seed failed_jobs failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?)
+    } else {
+        None
+    };
+    let runs = if body.filter_runs {
+        Some(seed_filter_runs().await.map_err(|e| {
+            log::error!("seed filter_runs failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?)
+    } else {
+        None
+    };
+
     Ok(Json(serde_json::json!({
         "ok": true,
+        "failed": failed,
+        "runs": runs,
         "auth": kind.as_str(),
         "fixtures": {
             "task_name": fixtures.task_name,

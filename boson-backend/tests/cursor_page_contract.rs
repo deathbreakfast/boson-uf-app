@@ -14,7 +14,7 @@ use boson_backend::{
     parse_job_status_filter, resolve_job_filter, runs_cursor_eligible, runs_cursor_scope,
     runs_list_start, runs_page_from_rows, JobSummary, ListStart, RunSummary, JOBS_CURSOR_SCOPE,
 };
-use boson_core::{page_jobs_after, page_runs_after, Job, JobStatus, Run};
+use boson_core::{page_jobs_after, page_runs_after, Job, JobFilter, JobStatus, Run, RunFilter};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use orbital_data::DataValue;
 use orbital_paging::{
@@ -91,6 +91,11 @@ fn serve_jobs(
     let status = extract_status_filter(request)
         .as_deref()
         .and_then(parse_job_status_filter);
+    let status = JobFilter {
+        statuses: status.into_iter().collect(),
+        ..JobFilter::default()
+    };
+    let status = &status;
     let start = jobs_list_start(request);
     let want = (PAGE + 1) as usize;
     let rows: Vec<Job> = match &start {
@@ -117,14 +122,18 @@ fn serve_runs(
 ) -> (ListStart<boson_core::RunKey>, Page<RunSummary>) {
     assert!(runs_cursor_eligible(request, scope));
     let job = resolve_job_filter(scope.map(str::to_string), request);
+    let job = RunFilter {
+        job_id: job,
+        ..RunFilter::default()
+    };
     let start = runs_list_start(request, scope);
     let want = (PAGE + 1) as usize;
     let rows: Vec<Run> = match &start {
-        ListStart::After(key) => page_runs_after(all.iter(), job.as_deref(), key.as_ref(), want)
+        ListStart::After(key) => page_runs_after(all.iter(), &job, key.as_ref(), want)
             .into_iter()
             .cloned()
             .collect(),
-        ListStart::Offset(offset) => page_runs_after(all.iter(), job.as_deref(), None, usize::MAX)
+        ListStart::Offset(offset) => page_runs_after(all.iter(), &job, None, usize::MAX)
             .into_iter()
             .skip(*offset)
             .take(want)

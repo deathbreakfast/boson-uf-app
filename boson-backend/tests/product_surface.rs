@@ -27,7 +27,8 @@ fn boson_routes_mount_happy_path() {
         r#"path!("tasks")"#,
         r#"path!("tasks/:task_name")"#,
         r#"path!("tasks/:task_name/config")"#,
-        r#"path!("queue")"#,
+        r#"path!("jobs")"#,
+        r#"path!("queue") view=BosonQueueRedirect"#,
         r#"path!("runs")"#,
         r#"path!("runs/:id")"#,
         "BosonLayoutRouteView",
@@ -48,7 +49,7 @@ fn boson_routes_drop_leaf_sad_path() {
     for needle in [
         r#"path!("tasks/:task_name")"#,
         r#"path!("tasks/:task_name/config")"#,
-        r#"path!("queue")"#,
+        r#"path!("jobs")"#,
         r#"path!("runs/:id")"#,
     ] {
         assert!(
@@ -84,7 +85,7 @@ fn layout_auth_gate_and_nav_happy_path() {
         "Outlet",
         "nav-boson-dashboard",
         "nav-boson-tasks",
-        "nav-boson-queue",
+        "nav-boson-jobs",
         "nav-boson-runs",
         "AppBarUserMenu",
         "UnifiedFieldShellLayout",
@@ -111,7 +112,7 @@ fn layout_missing_nav_sad_path() {
     for id in [
         "nav-boson-dashboard",
         "nav-boson-tasks",
-        "nav-boson-queue",
+        "nav-boson-jobs",
         "nav-boson-runs",
     ] {
         assert!(
@@ -210,11 +211,24 @@ fn server_drop_require_session_on_get_tasks_sad_path() {
     );
 
     let jobs = read_app("server/jobs.rs");
-    let start = jobs.find("pub async fn cancel_job").expect("cancel_job");
-    let body = &jobs[start..start + 450.min(jobs.len() - start)];
+    for action in ["cancel_job", "retry_jobs", "drop_jobs"] {
+        let start = jobs
+            .find(&format!("pub async fn {action}"))
+            .unwrap_or_else(|| panic!("{action}"));
+        let body = &jobs[start..start + 650.min(jobs.len() - start)];
+        assert!(
+            body.contains("authorize_job_action(&ctx, JobAction::"),
+            "{action} must run the job action check before Boson IO"
+        );
+    }
+    let start = jobs
+        .find("async fn authorize_job_action")
+        .expect("authorize_job_action");
+    let body = &jobs[start..start + 300.min(jobs.len() - start)];
     assert!(
-        body.contains("require_session(&ctx)?"),
-        "cancel_job must call require_session before Boson IO"
+        body.contains("require_session(ctx)?")
+            && body.contains("require_permission(super::BOSON_ADMIN_PERMISSION)"),
+        "the job action check must require a session and BosonAdmin"
     );
 }
 
@@ -271,9 +285,20 @@ fn index_pages_testid_and_list_bindings_happy_path() {
         "BosonTasksIndexPage missing boson-tasks testid"
     );
 
-    let queue = read_app("pages/queue/mod.rs");
-    for needle in ["boson-queue", "cancel_job"] {
-        assert!(queue.contains(needle), "BosonQueuePage missing `{needle}`");
+    let jobs = read_app("pages/jobs/mod.rs");
+    for needle in ["boson-jobs", "cancel_job", "FailedJobsPanel"] {
+        assert!(jobs.contains(needle), "BosonJobsPage missing `{needle}`");
+    }
+    let failed = read_app("pages/jobs/failed.rs");
+    for needle in [
+        "retry_jobs",
+        "drop_jobs",
+        "DataTableSelectionMode::Multiselect",
+    ] {
+        assert!(
+            failed.contains(needle),
+            "FailedJobsPanel missing `{needle}`"
+        );
     }
 
     let runs = read_app("pages/runs/mod.rs");
@@ -295,10 +320,10 @@ fn index_drop_dashboard_testid_sad_path() {
         tasks.contains("data_testid=\"boson-tasks\""),
         "dropping boson-tasks breaks host / future Playwright parity"
     );
-    let queue = read_app("pages/queue/mod.rs");
+    let jobs = read_app("pages/jobs/mod.rs");
     assert!(
-        queue.contains("data_testid=\"boson-queue\""),
-        "dropping boson-queue breaks host / future Playwright parity"
+        jobs.contains("data_testid=\"boson-jobs\""),
+        "dropping boson-jobs breaks host / future Playwright parity"
     );
     let runs = read_app("pages/runs/mod.rs");
     assert!(
@@ -414,7 +439,7 @@ fn lazy_routes_wire_pages_happy_path() {
         "BosonTasksIndexPage",
         "BosonTaskDetailPage",
         "BosonTaskConfigPage",
-        "BosonQueuePage",
+        "BosonJobsPage",
         "BosonRunsIndexPage",
         "BosonRunDetailPage",
         "BosonLayout",
