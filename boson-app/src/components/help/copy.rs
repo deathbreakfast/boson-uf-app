@@ -42,48 +42,10 @@ pub fn tasks_overview_help() -> AnyView {
     caption("Top five tasks from the task index ordering.")
 }
 
-pub fn basic_config_help() -> AnyView {
-    caption(
-        "Routes background work to a Gluon virtual pool and sets default priority. Lower priority numbers run sooner.",
-    )
-}
-
-pub fn pool_field_help() -> AnyView {
-    caption(
-        "Virtual pool selects which worker capacity runs this task. Default is \"global\" when no Gluon pools are configured.",
-    )
-}
-
-pub fn retry_policy_help() -> AnyView {
-    caption(
-        "Controls re-attempts after failure: maximum attempts, initial delay, exponential backoff multiplier, and cap on wait time between retries.",
-    )
-}
-
-pub fn backoff_multiplier_help() -> AnyView {
-    caption(
-        "Multiplier applied to the delay after each failed attempt. For example, 2 doubles the wait each retry until max delay is reached.",
-    )
-}
-
-pub fn max_delay_help() -> AnyView {
-    caption(
-        "Upper bound on milliseconds to wait between retry attempts, even when backoff would exceed this value.",
-    )
-}
-
 pub fn pool_help() -> AnyView {
     caption(
         "Virtual pool routes this job to Gluon worker capacity. \"global\" is the default when no pool override is configured.",
     )
-}
-
-pub const fn max_attempts_hint() -> &'static str {
-    "Total tries including the first run. Set to 1 to disable retries."
-}
-
-pub const fn initial_delay_hint() -> &'static str {
-    "Milliseconds to wait before the first retry after a failure."
 }
 
 pub fn attempt_help() -> AnyView {

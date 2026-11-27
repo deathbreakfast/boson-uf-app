@@ -12,9 +12,9 @@ use orbital_paging::{Page, PageRequest};
 
 #[cfg(feature = "ssr")]
 use super::helpers::{require_session, run_to_summary, trace_server_result};
-use super::types::RunSummary;
 #[cfg(feature = "ssr")]
 use super::types::{clamp_page_list_limit, MAX_PAGE_LIST_LIMIT};
+use super::types::{RunDetail, RunSummary};
 
 /// Paginated runs endpoint.
 #[uf_product_macros::server(permission = "BosonAdmin")]
@@ -196,5 +196,69 @@ pub async fn get_run(
     .await;
     #[cfg(feature = "ssr")]
     trace_server_result("get_run", &result, None, None, Some(&id_for_trace));
+    result
+}
+
+/// Most runs of one job the attempts list loads.
+#[cfg(feature = "ssr")]
+const MAX_ATTEMPTS_LISTED: usize = 100;
+
+/// A run with its job, every attempt of that job and the task's attempt budget.
+#[uf_product_macros::server(permission = "BosonAdmin")]
+pub async fn get_run_detail(
+    /// Unique identifier of the run to look up.
+    run_id: String,
+) -> Result<Option<RunDetail>, ServerFnError> {
+    let id_for_trace = run_id.clone();
+    let result = async {
+        boson_backend::validate_run_id(&run_id).map_err(|e| ServerFnError::new(e.to_string()))?;
+        let ctx = higgs::Higgs::from_request().await?;
+        require_session(&ctx)?;
+        let backend = super::helpers::boson_backend()?;
+        let backend = backend.as_ref();
+        let Some(run) = backend.get_run(&run_id).await else {
+            return Ok(None);
+        };
+        let job = backend
+            .get_job(&run.job_id)
+            .await
+            .map(|j| boson_backend::run_job_info(&j, super::helpers::person_name));
+        let max_attempts = backend
+            .get_task_config(&run.task_name)
+            .await
+            .map_err(|e| ServerFnError::new(boson_backend::format_task_config_load_error(e)))?
+            .retry_policy
+            .max_attempts
+            .max(1);
+        let mut attempts = backend
+            .list_runs_after(
+                &boson_core::RunFilter::job(&run.job_id),
+                None,
+                MAX_ATTEMPTS_LISTED,
+            )
+            .await;
+        attempts.sort_by(|a, b| {
+            a.attempt
+                .cmp(&b.attempt)
+                .then(a.started_at.cmp(&b.started_at))
+        });
+        let can_edit = super::helpers::can_edit_task_type(&run.task_name).await;
+        let running_for_ms = (run.status == boson_core::RunStatus::Running).then(|| {
+            (chrono::Utc::now() - run.started_at)
+                .num_milliseconds()
+                .max(0)
+        });
+        Ok(Some(RunDetail {
+            run: run_to_summary(run),
+            job,
+            max_attempts,
+            attempts: attempts.into_iter().map(run_to_summary).collect(),
+            running_for_ms,
+            can_edit,
+        }))
+    }
+    .await;
+    #[cfg(feature = "ssr")]
+    trace_server_result("get_run_detail", &result, None, None, Some(&id_for_trace));
     result
 }

@@ -91,10 +91,12 @@
 //!
 //! ## Browse tasks
 //!
-//! Task pages list registered handlers with effective pool and priority overlays.
-//! [`BosonTasksIndexPage`] loads [`get_tasks`] for the index; [`BosonTaskDetailPage`] calls
-//! [`get_task`] for one task name; [`BosonTaskConfigPage`] uses [`update_task_config`] after
-//! email verification. Open these routes when operators adjust retry policy or pool assignment.
+//! Task pages list registered handlers with their owner, queue and run totals.
+//! [`BosonTasksIndexPage`] loads [`get_tasks_datatable_page`] for the index;
+//! [`BosonTaskDetailPage`] calls [`get_task_detail`] for one task name and shows Overview,
+//! Settings and Access tabs. The Settings tab ([`BosonTaskConfigPage`]) uses
+//! [`update_task_config`] after email verification, for people who can edit the task type.
+//! Open these routes when operators adjust retries, limits or the queue.
 //!
 //! **Prerequisites:** Routes mounted; task names must pass `boson_backend::validate_task_name`;
 //! config edits require a verified email.
@@ -190,18 +192,18 @@
 //!
 //! ## Routes
 //!
-//! Mounted under `/boson` by [`BosonRoutes`]. Task config requires a verified email.
+//! Mounted under `/boson` by [`BosonRoutes`]. The Settings tab requires a verified email.
 //!
 //! | Path | Page | Key server fn(s) |
 //! |---|---|---|
 //! | `/boson` | [`BosonRootPage`] | [`get_dashboard_stats`], [`get_run_stats_series`] |
 //! | `/boson/tasks` | [`BosonTasksIndexPage`] | [`get_tasks_page`], [`get_tasks_datatable_page`] |
-//! | `/boson/tasks/:task_name` | [`BosonTaskDetailPage`] | [`get_task`] |
-//! | `/boson/tasks/:task_name/config` (email-verified) | [`BosonTaskConfigPage`] | [`get_task_config`], [`update_task_config`], [`list_gluon_pools_for_boson_task_config`] |
+//! | `/boson/tasks/:task_name` (`?tab=settings` is email-verified) | [`BosonTaskDetailPage`], [`BosonTaskConfigPage`] | [`get_task_detail`], [`get_task_config`], [`update_task_config`], [`get_task_active_jobs`], [`list_gluon_pools_for_boson_task_config`] |
+//! | `/boson/tasks/:task_name/config` | [`BosonTaskConfigRedirect`] | redirects to `?tab=settings` |
 //! | `/boson/jobs` (`?tab=active`, `failed`, `finished`) | [`BosonJobsPage`] | [`list_jobs_datatable_page`], [`cancel_job`], [`retry_jobs`], [`drop_jobs`] |
 //! | `/boson/queue` | [`BosonQueueRedirect`] | redirects to `/boson/jobs` |
 //! | `/boson/runs` | [`BosonRunsIndexPage`] | [`list_runs_datatable_page`], [`list_task_names`] |
-//! | `/boson/runs/:id` | [`BosonRunDetailPage`] | [`get_run`] |
+//! | `/boson/runs/:id` | [`BosonRunDetailPage`] | [`get_run_detail`], [`retry_jobs`], [`drop_jobs`], [`cancel_job`] |
 //!
 //! ## Examples
 //!
@@ -253,15 +255,16 @@ pub use lazy_routes::{
 };
 pub use pages::{
     BosonJobsPage, BosonQueueRedirect, BosonRootPage, BosonRunDetailPage, BosonRunsIndexPage,
-    BosonTaskConfigPage, BosonTaskDetailPage, BosonTasksIndexPage,
+    BosonTaskConfigPage, BosonTaskConfigRedirect, BosonTaskDetailPage, BosonTasksIndexPage,
 };
 pub use server::{
-    cancel_job, drop_jobs, get_dashboard_stats, get_run, get_run_stats_series, get_task,
-    get_task_config, get_tasks, get_tasks_datatable_page, get_tasks_page,
-    list_gluon_pools_for_boson_task_config, list_jobs_datatable_page, list_jobs_page,
-    list_runs_datatable_page, list_runs_page, list_task_names, retry_jobs, update_task_config,
-    BosonPoolProvider, DashboardStats, GluonPoolPickRow, JobActionOutcome, JobSummary, RunSummary,
-    TaskConfigDto, TaskSummary, BOSON_ADMIN_PERMISSION,
+    cancel_job, drop_jobs, get_dashboard_stats, get_run, get_run_detail, get_run_stats_series,
+    get_task, get_task_active_jobs, get_task_config, get_task_detail, get_tasks,
+    get_tasks_datatable_page, get_tasks_page, list_gluon_pools_for_boson_task_config,
+    list_jobs_datatable_page, list_jobs_page, list_runs_datatable_page, list_runs_page,
+    list_task_names, retry_jobs, update_task_config, BosonPeopleLookup, BosonPoolProvider,
+    DashboardStats, GluonPoolPickRow, JobActionOutcome, JobSummary, RunDetail, RunSummary,
+    TaskConfigDto, TaskDetail, TaskSummary, BOSON_ADMIN_PERMISSION,
 };
 
 uf_app! {

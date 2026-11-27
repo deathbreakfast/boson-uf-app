@@ -20,7 +20,7 @@ use crate::components::{BosonDataTableRefetchSkeleton, BosonDataTableShell};
 use columns::tasks_table_columns;
 use fetcher::{build_tasks_fetcher, TASKS_TABLE_PAGE_SIZE};
 
-/// Tasks list DataTable with LIST_VIEW, search, and filters.
+/// Tasks list DataTable with LIST_VIEW, search, and filters. A row opens its task type.
 #[component]
 pub fn TasksDataTable() -> impl IntoView {
     let navigate = use_navigate();
@@ -46,7 +46,8 @@ pub fn TasksDataTable() -> impl IntoView {
                 features=DataTableFeatures::LIST_VIEW | DataTableFeatures::MULTI_FILTER
                 list_view=ListViewConfig::new("name")
                     .with_secondary_fields(vec![
-                        "effective_pool".into(),
+                        "owner".into(),
+                        "queue".into(),
                         "jobs_queued".into(),
                         "success_rate".into(),
                     ])

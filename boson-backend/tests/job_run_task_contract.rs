@@ -25,6 +25,7 @@ fn sample_task(name: &str) -> TaskSummary {
         jobs_queued: 0,
         runs_total: 0,
         success_rate_pct: None,
+        owner: None,
     }
 }
 
@@ -204,6 +205,7 @@ fn update_task_config_merges_partial_happy_path() {
             backoff_multiplier: 2.0,
             max_delay_ms: 10_000,
         }),
+        ..Default::default()
     };
     let now = Utc.with_ymd_and_hms(2026, 7, 25, 12, 0, 0).unwrap();
     apply_task_config_update(&mut config, &req, now);

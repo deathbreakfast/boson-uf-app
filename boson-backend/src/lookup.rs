@@ -25,7 +25,7 @@ pub fn sort_tasks_by_name(tasks: &mut [TaskSummary]) {
     tasks.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
-/// Filters tasks by case-insensitive substring match on name, signature, or pool.
+/// Filters tasks by case-insensitive substring match on name, owner, or queue (pool).
 ///
 /// Blank / whitespace-only queries leave the list unchanged.
 pub fn filter_tasks_by_query(tasks: &mut Vec<TaskSummary>, query: Option<&str>) {
@@ -38,7 +38,9 @@ pub fn filter_tasks_by_query(tasks: &mut Vec<TaskSummary>, query: Option<&str>) 
     }
     tasks.retain(|t| {
         t.name.to_lowercase().contains(&q_lower)
-            || t.signature_json.to_lowercase().contains(&q_lower)
+            || t.owner
+                .as_deref()
+                .is_some_and(|o| o.to_lowercase().contains(&q_lower))
             || t.effective_pool.to_lowercase().contains(&q_lower)
     });
 }

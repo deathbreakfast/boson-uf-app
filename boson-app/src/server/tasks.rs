@@ -13,7 +13,7 @@ use super::helpers::{
 };
 #[cfg(feature = "ssr")]
 use super::types::clamp_page_list_limit;
-use super::types::{TaskConfigDto, TaskSummary, UpdateTaskConfigRequest};
+use super::types::{TaskConfigDto, TaskDetail, TaskSummary, UpdateTaskConfigRequest};
 
 /// Get all tasks with effective config and stats.
 #[uf_product_macros::server]
@@ -52,6 +52,123 @@ pub async fn get_task(
     .await;
     #[cfg(feature = "ssr")]
     trace_server_result("get_task", &result, Some(&name_for_trace), None, None);
+    result
+}
+
+/// Runs the task type page lists under Recent runs.
+#[cfg(feature = "ssr")]
+const RECENT_RUNS: usize = 10;
+
+/// Everything the task type page shows. `None` when no task type has that name.
+#[uf_product_macros::server]
+pub async fn get_task_detail(
+    /// Registry name of the task to look up.
+    task_name: String,
+) -> Result<Option<TaskDetail>, ServerFnError> {
+    let name_for_trace = task_name.clone();
+    let result = async {
+        boson_backend::validate_task_name(&task_name)
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let ctx = higgs::Higgs::from_request().await?;
+        require_session(&ctx)?;
+        let backend = super::helpers::boson_backend()?;
+        let backend = backend.as_ref();
+        let Some(desc) = backend.registry().get(&task_name) else {
+            return Ok(None);
+        };
+        let summary = build_task_summary(backend, desc).await?;
+        let config = backend
+            .get_task_config(&task_name)
+            .await
+            .map_err(|e| ServerFnError::new(boson_backend::format_task_config_load_error(e)))?;
+
+        // Runs come newest first; the counts use the coordinator's filtered count.
+        let task_filter = boson_core::RunFilter {
+            task: Some(task_name.clone()),
+            ..boson_core::RunFilter::default()
+        };
+        let runs = backend
+            .list_runs_after(&task_filter, None, RECENT_RUNS)
+            .await;
+        let day = boson_core::RunFilter {
+            started_from: Some(chrono::Utc::now() - chrono::Duration::hours(24)),
+            ..task_filter.clone()
+        };
+        let day_success = boson_core::RunFilter {
+            statuses: vec![boson_core::RunStatus::Success],
+            ..day.clone()
+        };
+        let count = |n: u64| u32::try_from(n).unwrap_or(u32::MAX);
+        let runs_24h = count(backend.count_runs_matching(&day).await.unwrap_or(0));
+        let success_24h = count(backend.count_runs_matching(&day_success).await.unwrap_or(0));
+
+        Ok(Some(TaskDetail {
+            description: boson_backend::task_description_from_signature(desc.signature_json),
+            waiting: summary.jobs_queued,
+            runs_24h,
+            success_rate_24h_pct: boson_backend::success_rate_pct(runs_24h, success_24h),
+            settings_sentence: boson_backend::settings_sentence(&config),
+            arguments: boson_backend::task_arguments_from_signature(desc.signature_json),
+            // Any signed-in user can open this page, but handler error text can hold URLs,
+            // account details or personal data and stays behind BosonAdmin (get_run), so the
+            // recent runs leave it out.
+            recent_runs: runs
+                .into_iter()
+                .map(|r| {
+                    let mut summary = boson_backend::run_to_summary(r);
+                    summary.error_message = None;
+                    summary
+                })
+                .collect(),
+            can_edit: super::helpers::can_edit_task_type(&task_name).await,
+            summary,
+        }))
+    }
+    .await;
+    #[cfg(feature = "ssr")]
+    trace_server_result(
+        "get_task_detail",
+        &result,
+        Some(&name_for_trace),
+        None,
+        None,
+    );
+    result
+}
+
+/// How many jobs of the task are waiting or running now (what "Most at once" counts).
+#[uf_product_macros::server(permission = "BosonAdmin")]
+pub async fn get_task_active_jobs(
+    /// Registry name of the task to count.
+    task_name: String,
+) -> Result<u32, ServerFnError> {
+    let name_for_trace = task_name.clone();
+    let result = async {
+        use boson_core::JobStatus;
+
+        boson_backend::validate_task_name(&task_name)
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
+        let ctx = higgs::Higgs::from_request().await?;
+        require_session(&ctx)?;
+        let backend = super::helpers::boson_backend()?;
+        let backend = backend.as_ref();
+        let queued = backend
+            .count_jobs_for_task(&task_name, Some(JobStatus::Queued))
+            .await;
+        let running = backend
+            .count_jobs_for_task(&task_name, Some(JobStatus::Running))
+            .await;
+        Ok(u32::try_from(queued.saturating_add(running)).unwrap_or(u32::MAX))
+    }
+    .await;
+    #[cfg(feature = "ssr")]
+    trace_server_result(
+        "get_task_active_jobs",
+        &result,
+        Some(&name_for_trace),
+        None,
+        None,
+    );
     result
 }
 

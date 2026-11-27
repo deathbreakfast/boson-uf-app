@@ -16,5 +16,5 @@ pub use jobs::{BosonJobsPage, BosonQueueRedirect};
 pub use run_detail::BosonRunDetailPage;
 pub use runs::BosonRunsIndexPage;
 pub use task_config::BosonTaskConfigPage;
-pub use task_detail::BosonTaskDetailPage;
+pub use task_detail::{BosonTaskConfigRedirect, BosonTaskDetailPage};
 pub use tasks::BosonTasksIndexPage;

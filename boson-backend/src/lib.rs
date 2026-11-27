@@ -224,11 +224,14 @@ pub use lookup::{
     filter_tasks_by_query, find_job_by_id, find_run_by_id, find_task_by_name, sort_tasks_by_name,
 };
 pub use map::{
-    aggregate_task_stats, apply_task_config_update, args_summary, dashboard_stats,
-    default_gluon_pool_rows, job_status_to_dto, job_to_summary, parse_job_status_filter,
-    retry_policy_from_dto, retry_policy_to_dto, run_status_to_dto, run_to_summary,
-    success_rate_pct, task_config_to_dto, task_summary_from_parts, TaskStatsAgg,
-    ARGS_SUMMARY_VALUE_CHARS,
+    actor_label, aggregate_task_stats, apply_task_config_update, args_summary, at_in_flight_limit,
+    dashboard_stats, default_gluon_pool_rows, format_duration_ms, format_wait_ms,
+    idempotency_mode_from_dto, idempotency_mode_to_dto, job_label, job_status_to_dto,
+    job_to_summary, parse_job_status_filter, rate_limit_policy_from_dto, rate_limit_policy_to_dto,
+    retry_policy_from_dto, retry_policy_to_dto, retry_schedule_sentence, retry_wait_ms,
+    run_job_info, run_status_to_dto, run_to_summary, settings_sentence, short_id, success_rate_pct,
+    task_arguments_from_signature, task_config_to_dto, task_description_from_signature,
+    task_summary_from_parts, TaskStatsAgg, ARGS_SUMMARY_VALUE_CHARS,
 };
 pub use page_query::{
     extract_status_filter, job_filter_from_request, job_status_key, parse_time_range,
@@ -236,18 +239,23 @@ pub use page_query::{
     FROM_FIELD, TO_FIELD,
 };
 pub use types::{
-    clamp_page_list_limit, BosonPoolProvider, DashboardChartPoint, DashboardChartSeries,
-    DashboardStats, GluonPoolPickRow, JobActionFailure, JobActionOutcome, JobStatusDto, JobSummary,
-    RetriedJob, RetryPolicyDto, RunStatusDto, RunSummary, TaskConfigDto, TaskSummary,
-    UpdateTaskConfigRequest, FAILED_JOB_RETENTION_DAYS, JOBS_PAGE_SIZE, MAX_PAGE_LIST_LIMIT,
-    RUNS_PAGE_SIZE, TASKS_PAGE_SIZE,
+    clamp_page_list_limit, BosonPeopleLookup, BosonPoolProvider, DashboardChartPoint,
+    DashboardChartSeries, DashboardStats, GluonPoolPickRow, IdempotencyModeDto, JobActionFailure,
+    JobActionOutcome, JobStatusDto, JobSummary, RateLimitPolicyDto, RetriedJob, RetryPolicyDto,
+    RunDetail, RunJobInfo, RunStatusDto, RunSummary, TaskArgumentRow, TaskConfigDto, TaskDetail,
+    TaskSummary, UpdateTaskConfigRequest, FAILED_JOB_RETENTION_DAYS, JOBS_PAGE_SIZE,
+    MAX_PAGE_LIST_LIMIT, RUNS_PAGE_SIZE, TASKS_PAGE_SIZE,
 };
 pub use validate::{
-    boson_run_path, boson_runs_job_filter_path, boson_task_config_path, boson_task_path,
-    encode_ops_path_segment, format_task_config_load_error, validate_job_id, validate_pool_offered,
-    validate_range_secs, validate_run_id, validate_task_config_update, validate_task_name,
-    BosonIdError, BosonInputError, MAX_BOSON_ID_CHARS, MAX_POOL_NAME_CHARS, MAX_RETRY_ATTEMPTS,
-    MAX_RETRY_DELAY_MS, MAX_TASK_PRIORITY, MIN_TASK_PRIORITY, RANGE_SECS_24H, RANGE_SECS_7D,
+    boson_queue_pool_path, boson_run_path, boson_runs_job_filter_path, boson_task_config_path,
+    boson_task_failed_runs_path, boson_task_path, boson_task_runs_path, boson_task_settings_path,
+    boson_task_waiting_jobs_path, encode_ops_path_segment, format_task_config_load_error,
+    ms_to_seconds_field, parse_multiplier_field, parse_wait_seconds_field,
+    parse_whole_number_field, validate_job_id, validate_pool_offered, validate_range_secs,
+    validate_run_id, validate_task_config_update, validate_task_name, BosonIdError,
+    BosonInputError, MAX_BACKOFF_MULTIPLIER, MAX_BOSON_ID_CHARS, MAX_POOL_NAME_CHARS,
+    MAX_RETRY_ATTEMPTS, MAX_RETRY_DELAY_MS, MAX_RETRY_WAIT_SECS, MAX_TASK_PRIORITY,
+    MIN_TASK_PRIORITY, RANGE_SECS_24H, RANGE_SECS_7D,
 };
 
 #[cfg(test)]

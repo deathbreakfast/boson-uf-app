@@ -55,6 +55,12 @@ pub struct TaskSummary {
     pub runs_total: u32,
     /// Success rate percent when `runs_total > 0`.
     pub success_rate_pct: Option<f64>,
+    /// Team or person that owns the task type, when the host knows one.
+    ///
+    /// Boson's registry carries no owner, so this stays `None` until the host supplies the
+    /// owner from the task type's Access settings.
+    #[serde(default)]
+    pub owner: Option<String>,
 }
 
 /// Summary of a Boson job for queue / list views.
@@ -155,6 +161,26 @@ pub struct RetryPolicyDto {
     pub max_delay_ms: u64,
 }
 
+/// Enqueue limits exposed to the UI (`0` in either field means no limit).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RateLimitPolicyDto {
+    /// Most jobs of the task waiting or running at once.
+    pub max_in_flight: u32,
+    /// Most enqueues per second, counted by each server on its own.
+    pub max_enqueue_per_second: u32,
+}
+
+/// How enqueue treats a repeated idempotency key.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdempotencyModeDto {
+    /// Check the key so a job runs once (Boson's default).
+    #[default]
+    ExactlyOnce,
+    /// Skip the check; faster, but a key can run twice.
+    AtLeastOnce,
+}
+
 /// Task configuration DTO returned by get/update config endpoints.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TaskConfigDto {
@@ -166,8 +192,87 @@ pub struct TaskConfigDto {
     pub pool: String,
     /// Effective retry policy.
     pub retry_policy: RetryPolicyDto,
+    /// Enqueue limits.
+    pub rate_limit_policy: RateLimitPolicyDto,
+    /// Duplicate handling for idempotency keys.
+    pub idempotency_mode: IdempotencyModeDto,
     /// RFC3339 last-updated timestamp.
     pub updated_at: String,
+}
+
+/// One task argument, read from the task's signature JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskArgumentRow {
+    /// Argument name.
+    pub name: String,
+    /// Plain-language type ("Text", "Whole number", …).
+    pub type_label: String,
+    /// Description from the signature, if it has one.
+    pub description: Option<String>,
+}
+
+/// Everything the task type page shows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskDetail {
+    /// Registry summary (name, queue, totals, owner).
+    pub summary: TaskSummary,
+    /// One-line description from the signature JSON, if it has one.
+    pub description: Option<String>,
+    /// Jobs waiting to run.
+    pub waiting: u32,
+    /// Runs started in the last 24 hours.
+    pub runs_24h: u32,
+    /// Success rate of the runs started in the last 24 hours.
+    pub success_rate_24h_pct: Option<f64>,
+    /// The settings in one sentence, ending with when they last changed.
+    pub settings_sentence: String,
+    /// Arguments from the signature JSON.
+    pub arguments: Vec<TaskArgumentRow>,
+    /// Latest runs of this task, newest first.
+    pub recent_runs: Vec<RunSummary>,
+    /// Whether the session may open the Settings tab.
+    pub can_edit: bool,
+}
+
+/// The job behind a run, as the run page shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunJobInfo {
+    /// Job id.
+    pub job_id: String,
+    /// Short label: the id's tail and the first short text argument.
+    pub label: String,
+    /// Current job status.
+    pub status: JobStatusDto,
+    /// Queue (pool) the job runs on.
+    pub pool: String,
+    /// Who enqueued it ("System", an app, or a person).
+    pub started_by: String,
+}
+
+/// Everything the run page shows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunDetail {
+    /// The run itself.
+    pub run: RunSummary,
+    /// Its job, when the job is still stored.
+    pub job: Option<RunJobInfo>,
+    /// Total tries the task's retry policy allows.
+    pub max_attempts: u32,
+    /// Every run of the job, oldest first.
+    pub attempts: Vec<RunSummary>,
+    /// How long a running run has been going, measured when the page loaded.
+    pub running_for_ms: Option<i64>,
+    /// Whether the session may retry, drop or cancel the job.
+    pub can_edit: bool,
+}
+
+/// Resolves a person's display name from a user id for "Started by".
+///
+/// Hosts with a people directory provide an `Arc<dyn BosonPeopleLookup>` in Leptos request
+/// context; without one the run page shows the user id. Boson stores no names itself.
+pub trait BosonPeopleLookup: Send + Sync {
+    /// Display name for `user_id`, or `None` when the host doesn't know it.
+    fn display_name(&self, user_id: &str) -> Option<String>;
 }
 
 /// Aggregate counters shown on the Boson dashboard.
@@ -204,7 +309,7 @@ pub struct DashboardChartSeries {
 }
 
 /// Partial update request for task configuration.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UpdateTaskConfigRequest {
     /// New priority when set.
     pub priority: Option<i32>,
@@ -212,6 +317,12 @@ pub struct UpdateTaskConfigRequest {
     pub pool: Option<String>,
     /// New retry policy when set.
     pub retry_policy: Option<RetryPolicyDto>,
+    /// New enqueue limits when set.
+    #[serde(default)]
+    pub rate_limit_policy: Option<RateLimitPolicyDto>,
+    /// New duplicate handling when set.
+    #[serde(default)]
+    pub idempotency_mode: Option<IdempotencyModeDto>,
 }
 
 /// Gluon virtual pool row for Boson task-config pool picker.

@@ -9,7 +9,7 @@ use leptos_router::{lazy_route, LazyRoute};
 
 use crate::{
     BosonJobsPage, BosonLayout, BosonRootPage, BosonRunDetailPage, BosonRunsIndexPage,
-    BosonTaskConfigPage, BosonTaskDetailPage, BosonTasksIndexPage,
+    BosonTaskConfigRedirect, BosonTaskDetailPage, BosonTasksIndexPage,
 };
 
 /// Prefetch the boson family WASM chunk (leaf pages share split modules).
@@ -68,7 +68,7 @@ impl LazyRoute for BosonTaskDetailRoute {
     }
 }
 
-/// Lazy `/boson/tasks/:task_name/config` (email-verified).
+/// Lazy `/boson/tasks/:task_name/config`: redirects to `?tab=settings`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BosonVerifiedTaskConfigRoute;
 
@@ -79,12 +79,7 @@ impl LazyRoute for BosonVerifiedTaskConfigRoute {
     }
 
     fn view(_this: Self) -> AnyView {
-        view! {
-            <orbital::routes::RequireAuthenticated requires_email_verification=true>
-                <BosonTaskConfigPage />
-            </orbital::routes::RequireAuthenticated>
-        }
-        .into_any()
+        view! { <BosonTaskConfigRedirect /> }.into_any()
     }
 }
 
