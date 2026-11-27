@@ -4,7 +4,7 @@
 //! [`crate::server`]. Prefer crate-root rustdoc for mount and server-fn teaching examples.
 
 pub mod dashboard;
-pub mod queue;
+pub mod jobs;
 pub mod run_detail;
 pub mod runs;
 pub mod task_config;
@@ -12,7 +12,7 @@ pub mod task_detail;
 pub mod tasks;
 
 pub use dashboard::BosonRootPage;
-pub use queue::BosonQueuePage;
+pub use jobs::{BosonJobsPage, BosonQueueRedirect};
 pub use run_detail::BosonRunDetailPage;
 pub use runs::BosonRunsIndexPage;
 pub use task_config::BosonTaskConfigPage;

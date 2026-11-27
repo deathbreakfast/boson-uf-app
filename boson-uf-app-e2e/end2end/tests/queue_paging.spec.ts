@@ -2,8 +2,9 @@ import { test, expect, seedAuth, waitForHydrated } from "./fixtures";
 import type { Locator, Page, Request } from "@playwright/test";
 
 // The seed adds 90 jobs `e2e-page-000` ... `e2e-page-089`, alternating queued and failed,
-// dated after every other job. With the queued filter the table spans at least three
-// 20-row pages; page 1 may start with queued jobs other specs enqueued.
+// dated after every other job. The Jobs page opens on Active (waiting and running), where
+// the queued filter keeps the table at least three 20-row pages; page 1 may start with
+// queued jobs other specs enqueued.
 
 const VARIANTS = [
   { name: "status-filter-desktop-light", scheme: "light", viewport: { width: 1280, height: 800 }, filter: true },
@@ -71,9 +72,9 @@ for (const variant of VARIANTS) {
     test(`pw-boson-queue-paging-happy-${variant.name}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: variant.scheme });
       await seedAuth(page, "admin", { pagingJobs: true });
-      await page.goto("/boson/queue", { waitUntil: "domcontentloaded" });
+      await page.goto("/boson/jobs", { waitUntil: "domcontentloaded" });
       await waitForHydrated(page);
-      const table = page.getByTestId("boson-queue-data-table");
+      const table = page.getByTestId("boson-jobs-data-table");
       await expect(table).toBeVisible({ timeout: 60_000 });
       const footer = table.getByTestId("data-table-footer");
       const bar = table.getByTestId("data-table-pagination");

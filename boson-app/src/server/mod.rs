@@ -3,7 +3,8 @@
 //! DTOs and pure mapping helpers live in [`boson_backend`] so contracts stay
 //! unit/integration-testable without the host UI graph. Server functions run on
 //! SSR only and use [`higgs::Higgs::from_request()`] plus [`helpers::require_session`]
-//! on every endpoint. Mutators `cancel_job` / `update_task_config`, task-config
+//! on every endpoint. Job actions `cancel_job`, `retry_jobs` and `drop_jobs` go through one
+//! access check (`BosonAdmin` today). Mutator `update_task_config`, task-config
 //! reads (`get_task_config`, `list_gluon_pools_for_boson_task_config`), and run
 //! history lists (`list_runs_page`, `list_runs_datatable_page`) require Gauge
 //! permission `BosonAdmin`. Task-config endpoints additionally mirror the UI
@@ -26,7 +27,8 @@
 //! - Config update: `Invalid task config update:…` (including a pool the host's
 //!   [`boson_backend::BosonPoolProvider`] does not offer)
 //! - Config load: `Failed to load task config:…` / `Task config not found:…`
-//! - Mutators: `Failed to cancel job:…` / `Failed to update config:…`
+//! - Mutators: `Failed to cancel job:…` / `Failed to update config:…`; `retry_jobs` and
+//!   `drop_jobs` report per-job failures in `JobActionOutcome::failed`
 //!
 //! Blank / oversized / path-unsafe ids are rejected by `boson_backend::validate_*`
 //! before coordinator IO. Detail hrefs use `boson_backend::boson_*_path` helpers so
@@ -50,8 +52,10 @@ pub const BOSON_ADMIN_PERMISSION: &str = "BosonAdmin";
 
 pub use dashboard::{get_dashboard_stats, get_run_stats_series};
 pub use gluon_pools::list_gluon_pools_for_boson_task_config;
-pub use jobs::{cancel_job, list_jobs_datatable_page, list_jobs_page};
-pub use runs::{get_run, list_runs_datatable_page, list_runs_page};
+pub use jobs::{
+    cancel_job, drop_jobs, list_jobs_datatable_page, list_jobs_page, retry_jobs, JobAction,
+};
+pub use runs::{get_run, list_runs_datatable_page, list_runs_page, list_task_names};
 pub use tasks::{
     get_task, get_task_config, get_tasks, get_tasks_datatable_page, get_tasks_page,
     update_task_config,

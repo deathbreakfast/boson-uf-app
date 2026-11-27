@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use orbital_data::{DataRecord, DataValue};
 
+use crate::components::format::{format_attempts, format_seconds};
 use crate::server::page_query::run_status_key;
 use crate::server::{RunStatusDto, RunSummary};
 
@@ -17,10 +18,6 @@ fn format_started_at(iso: &str) -> String {
     iso.to_string()
 }
 
-fn format_duration(ms: Option<i64>) -> String {
-    ms.map_or_else(|| "-".to_string(), |v| format!("{v}ms"))
-}
-
 pub fn run_to_record(run: RunSummary) -> DataRecord {
     let id = run.run_id.clone();
     DataRecord::new(
@@ -33,14 +30,17 @@ pub fn run_to_record(run: RunSummary) -> DataRecord {
                 "status".into(),
                 DataValue::Text(run_status_key(run.status).into()),
             ),
-            ("attempt".into(), DataValue::Text(run.attempt.to_string())),
+            (
+                "attempt".into(),
+                DataValue::Text(format_attempts(run.attempt, run.max_attempts)),
+            ),
             (
                 "started_at".into(),
                 DataValue::Text(format_started_at(&run.started_at)),
             ),
             (
                 "duration_ms".into(),
-                DataValue::Text(format_duration(run.duration_ms)),
+                DataValue::Text(format_seconds(run.duration_ms)),
             ),
         ]),
     )

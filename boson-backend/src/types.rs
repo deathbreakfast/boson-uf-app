@@ -72,6 +72,18 @@ pub struct JobSummary {
     pub pool: String,
     /// RFC3339 creation timestamp.
     pub created_at: String,
+    /// Milliseconds from creation to when the row was read.
+    pub waited_ms: i64,
+    /// The first two params as `key value`, joined with " · " (see [`crate::args_summary`]).
+    pub args_summary: String,
+    /// Attempt number (1-based).
+    pub attempt: i32,
+    /// Most attempts the task type's current retry policy allows, when the server looked it up.
+    pub max_attempts: Option<u32>,
+    /// Error of the job's latest run (failed-jobs list only).
+    pub last_error: Option<String>,
+    /// RFC3339 finish time of the job's latest run (failed-jobs list only).
+    pub failed_at: Option<String>,
 }
 
 /// Summary of a Boson run for history / detail views.
@@ -95,6 +107,39 @@ pub struct RunSummary {
     pub duration_ms: Option<i64>,
     /// Error message when the run failed.
     pub error_message: Option<String>,
+    /// Most attempts the task type's current retry policy allows, when the server looked it up.
+    pub max_attempts: Option<u32>,
+}
+
+/// A failed job that the `retry_jobs` server fn started again.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetriedJob {
+    /// The failed job that was retried.
+    pub from_job_id: String,
+    /// The new queued job.
+    pub job_id: String,
+    /// Pool the new job waits in.
+    pub pool: String,
+}
+
+/// A job a bulk action couldn't act on, with the reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobActionFailure {
+    /// The job the action was for.
+    pub job_id: String,
+    /// Why, in plain words ("it isn't a failed job"); coordinator internals stay on the server.
+    pub error: String,
+}
+
+/// What a bulk Retry or Drop did: each job lands in exactly one list.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobActionOutcome {
+    /// Jobs retried, with their new job ids (Retry only).
+    pub retried: Vec<RetriedJob>,
+    /// Ids of jobs dropped (Drop only).
+    pub dropped: Vec<String>,
+    /// Jobs the action failed for.
+    pub failed: Vec<JobActionFailure>,
 }
 
 /// Retry policy fields exposed to the UI.
@@ -199,8 +244,8 @@ pub const JOBS_PAGE_SIZE: u32 = 20;
 /// Page size used by the runs infinite scroll / `DataTable`.
 pub const RUNS_PAGE_SIZE: u32 = 20;
 
-/// Upper bound for in-memory list fetches (`DataTable` filters, chart series).
-pub const BOSON_LIST_FETCH_CAP: usize = 50_000;
+/// Days a failed job stays on the failed list before the retention sweep drops it.
+pub const FAILED_JOB_RETENTION_DAYS: i64 = boson_core::DEFAULT_FAILED_RETENTION.num_days();
 
 /// Maximum rows returned by a single paginated list server fn.
 pub const MAX_PAGE_LIST_LIMIT: u32 = 100;

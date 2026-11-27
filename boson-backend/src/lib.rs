@@ -20,7 +20,8 @@
 //!   [`encode_ops_path_segment`], [`boson_task_path`], [`boson_run_path`], and related
 //!   helpers.
 //! - **`DataTable` query adapters** — Supports status and quick-search filters for queue and
-//!   run tables via [`apply_jobs_datatable_query`] and [`apply_runs_datatable_query`].
+//!   run tables by building coordinator filters via [`job_filter_from_request`] and
+//!   [`run_filter_from_request`].
 //! - **Cursor paging** — Decides whether a jobs or runs table request pages by keyset cursor
 //!   or by offset, and builds the page with its `next_cursor`, via [`jobs_list_start`],
 //!   [`jobs_page_from_rows`], [`runs_list_start`], and [`runs_page_from_rows`].
@@ -223,20 +224,23 @@ pub use lookup::{
     filter_tasks_by_query, find_job_by_id, find_run_by_id, find_task_by_name, sort_tasks_by_name,
 };
 pub use map::{
-    aggregate_task_stats, apply_task_config_update, dashboard_stats, default_gluon_pool_rows,
-    job_status_to_dto, job_to_summary, parse_job_status_filter, retry_policy_from_dto,
-    retry_policy_to_dto, run_status_to_dto, run_to_summary, success_rate_pct, task_config_to_dto,
-    task_summary_from_parts, TaskStatsAgg,
+    aggregate_task_stats, apply_task_config_update, args_summary, dashboard_stats,
+    default_gluon_pool_rows, job_status_to_dto, job_to_summary, parse_job_status_filter,
+    retry_policy_from_dto, retry_policy_to_dto, run_status_to_dto, run_to_summary,
+    success_rate_pct, task_config_to_dto, task_summary_from_parts, TaskStatsAgg,
+    ARGS_SUMMARY_VALUE_CHARS,
 };
 pub use page_query::{
-    apply_jobs_datatable_query, apply_runs_datatable_query, extract_status_filter, job_status_key,
-    quick_search_text, resolve_job_filter, run_status_key,
+    extract_status_filter, job_filter_from_request, job_status_key, parse_time_range,
+    quick_search_text, resolve_job_filter, run_filter_from_request, run_status_key, JobsTab,
+    FROM_FIELD, TO_FIELD,
 };
 pub use types::{
     clamp_page_list_limit, BosonPoolProvider, DashboardChartPoint, DashboardChartSeries,
-    DashboardStats, GluonPoolPickRow, JobStatusDto, JobSummary, RetryPolicyDto, RunStatusDto,
-    RunSummary, TaskConfigDto, TaskSummary, UpdateTaskConfigRequest, BOSON_LIST_FETCH_CAP,
-    JOBS_PAGE_SIZE, MAX_PAGE_LIST_LIMIT, RUNS_PAGE_SIZE, TASKS_PAGE_SIZE,
+    DashboardStats, GluonPoolPickRow, JobActionFailure, JobActionOutcome, JobStatusDto, JobSummary,
+    RetriedJob, RetryPolicyDto, RunStatusDto, RunSummary, TaskConfigDto, TaskSummary,
+    UpdateTaskConfigRequest, FAILED_JOB_RETENTION_DAYS, JOBS_PAGE_SIZE, MAX_PAGE_LIST_LIMIT,
+    RUNS_PAGE_SIZE, TASKS_PAGE_SIZE,
 };
 pub use validate::{
     boson_run_path, boson_runs_job_filter_path, boson_task_config_path, boson_task_path,

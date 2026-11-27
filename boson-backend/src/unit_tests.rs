@@ -18,6 +18,8 @@ fn sample_job_core(id: &str, task: &str, status: JobStatus) -> Job {
         created_at: Utc::now(),
         signature_hash: 0,
         attempt: 1,
+        retried_from: None,
+        dropped_at: None,
     }
 }
 
@@ -397,66 +399,65 @@ fn run_stats_series_omits_failed_when_all_success_happy_path() {
     assert!(series[0].points.iter().any(|p| p.value > 0.0));
 }
 
-#[test]
-fn extract_status_filter_reads_equals_happy_path() {
-    let request = PageRequest {
+fn rules_request(items: Vec<(&str, &str)>, quick_search: Option<&str>) -> PageRequest {
+    PageRequest {
         offset: 0,
         limit: 20,
-        quick_search: None,
+        quick_search: quick_search.map(str::to_string),
         filter: Some(FilterQuery {
             logic: FilterLogicWire::And,
-            items: vec![FilterRuleParam {
-                field: "status".into(),
-                operator: "equals".into(),
-                value: DataValue::Text("queued".into()),
-            }],
+            items: items
+                .into_iter()
+                .map(|(field, value)| FilterRuleParam {
+                    field: field.into(),
+                    operator: "equals".into(),
+                    value: DataValue::Text(value.into()),
+                })
+                .collect(),
         }),
         sort: None,
         cursor: None,
-    };
-    assert_eq!(extract_status_filter(&request), Some("queued".into()));
+    }
 }
 
 #[test]
-fn extract_status_filter_ignores_non_status_sad() {
-    let request = PageRequest {
-        offset: 0,
-        limit: 20,
-        quick_search: None,
-        filter: Some(FilterQuery {
-            logic: FilterLogicWire::And,
-            items: vec![FilterRuleParam {
-                field: "task_name".into(),
-                operator: "equals".into(),
-                value: DataValue::Text("alpha".into()),
-            }],
-        }),
-        sort: None,
-        cursor: None,
-    };
-    assert_eq!(extract_status_filter(&request), None);
+fn run_filter_reads_status_task_and_time_happy_path() {
+    let now = Utc.with_ymd_and_hms(2026, 11, 26, 12, 0, 0).unwrap();
+    let request = rules_request(
+        vec![
+            ("status", "failed,timeout"),
+            ("task_name", "alpha"),
+            ("from", "7d"),
+        ],
+        Some(" 0AB9 "),
+    );
+    let filter = run_filter_from_request(&request, None, now);
+    assert_eq!(filter.statuses, vec![RunStatus::Failed, RunStatus::Timeout]);
+    assert_eq!(filter.task.as_deref(), Some("alpha"));
+    assert_eq!(filter.started_from, Some(now - chrono::Duration::days(7)));
+    assert_eq!(filter.started_to, None);
+    assert_eq!(filter.id_match.as_deref(), Some("0ab9"));
 }
 
 #[test]
-fn resolve_job_filter_prefers_scope_happy_path() {
-    let request = PageRequest {
-        offset: 0,
-        limit: 20,
-        quick_search: None,
-        filter: Some(FilterQuery {
-            logic: FilterLogicWire::And,
-            items: vec![FilterRuleParam {
-                field: "job_id".into(),
-                operator: "equals".into(),
-                value: DataValue::Text("from-filter".into()),
-            }],
-        }),
-        sort: None,
-        cursor: None,
-    };
+fn run_filter_scope_wins_over_job_rule_happy_path() {
+    let request = rules_request(vec![("job_id", "from-filter")], None);
+    let filter = run_filter_from_request(&request, Some("from-scope"), Utc::now());
+    assert_eq!(filter.job_id.as_deref(), Some("from-scope"));
+    let filter = run_filter_from_request(&request, None, Utc::now());
+    assert_eq!(filter.job_id.as_deref(), Some("from-filter"));
+}
+
+#[test]
+fn job_filter_status_rule_narrows_tab_sad() {
+    let request = rules_request(vec![("status", "queued")], None);
+    let active = job_filter_from_request(&request, JobsTab::Active, Utc::now()).unwrap();
+    assert_eq!(active.statuses, vec![JobStatus::Queued]);
+    assert!(!active.include_dropped);
     assert_eq!(
-        resolve_job_filter(Some("from-scope".into()), &request),
-        Some("from-scope".into())
+        job_filter_from_request(&request, JobsTab::Failed, Utc::now()),
+        None,
+        "a status outside the tab matches nothing"
     );
 }
 
@@ -474,48 +475,24 @@ fn quick_search_text_rejects_blank_sad() {
 }
 
 #[test]
-fn apply_jobs_datatable_query_filters_quick_search_happy_path() {
-    let mut jobs = vec![
-        job_to_summary(sample_job_core("j1", "alpha", JobStatus::Queued)),
-        job_to_summary(sample_job_core("j2", "beta", JobStatus::Running)),
-    ];
-    let request = PageRequest {
-        offset: 0,
-        limit: 20,
-        quick_search: Some("alpha".into()),
-        filter: None,
-        sort: None,
-        cursor: None,
-    };
-    apply_jobs_datatable_query(&mut jobs, &request);
-    assert_eq!(jobs.len(), 1);
-    assert_eq!(jobs[0].job_id, "j1");
+fn jobs_tab_round_trips_keys_edge() {
+    for tab in [JobsTab::Active, JobsTab::Failed, JobsTab::Finished] {
+        assert_eq!(JobsTab::from_key(tab.key()), tab);
+    }
+    assert_eq!(JobsTab::from_key("queue"), JobsTab::Active);
+    assert_eq!(
+        JobsTab::Finished.statuses(),
+        vec![JobStatus::Success, JobStatus::Canceled]
+    );
 }
 
 #[test]
-fn apply_runs_datatable_query_status_equals_happy_path() {
-    let mut runs = vec![
-        run_to_summary(sample_run_core("r1", "j1", "alpha", RunStatus::Success)),
-        run_to_summary(sample_run_core("r2", "j2", "beta", RunStatus::Failed)),
-    ];
-    let request = PageRequest {
-        offset: 0,
-        limit: 20,
-        quick_search: None,
-        filter: Some(FilterQuery {
-            logic: FilterLogicWire::And,
-            items: vec![FilterRuleParam {
-                field: "status".into(),
-                operator: "equals".into(),
-                value: DataValue::Text("failed".into()),
-            }],
-        }),
-        sort: None,
-        cursor: None,
-    };
-    apply_runs_datatable_query(&mut runs, &request);
-    assert_eq!(runs.len(), 1);
-    assert_eq!(runs[0].run_id, "r2");
+fn args_summary_shortens_values_edge() {
+    let long = "x".repeat(40);
+    let summary = args_summary(&serde_json::json!({"a": long, "b": {"k": 1}, "c": 3}));
+    assert_eq!(summary, format!("a {}… · b {{…}}", "x".repeat(23)));
+    assert_eq!(args_summary(&serde_json::json!("plain")), "plain");
+    assert_eq!(args_summary(&serde_json::Value::Null), "");
 }
 
 #[test]

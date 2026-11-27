@@ -1,10 +1,13 @@
-//! Job queue server functions.
+//! Job server functions: the Jobs tables, Cancel, and Retry / Drop for failed jobs.
 //!
-//! `list_jobs_datatable_page` pages by keyset cursor (`list_jobs_after`) when the request has
-//! no quick search and only `status` filter rules; quick search and other filters scan up to
-//! [`boson_backend::BOSON_LIST_FETCH_CAP`] jobs in memory and page by offset. See
-//! [`boson_backend::jobs_list_start`] for when a cursor request falls back to offset.
-//! `list_jobs_page` (infinite scroll) pages by offset.
+//! `list_jobs_datatable_page` reads one page at a time with the coordinator's keyset read
+//! (`list_jobs_after`), passing a [`boson_core::JobFilter`] built from the tab, the request's
+//! filter rules and its quick search ([`boson_backend::job_filter_from_request`]). The first
+//! page also returns `count_jobs_matching` as the total. A request past the first page whose
+//! cursor doesn't fit the query walks forward to its offset by keyset, then hands out cursors
+//! again. `list_jobs_page` (infinite scroll) pages by offset.
+//!
+//! [`authorize_job_action`] is the one check behind Cancel, Retry and Drop.
 
 use leptos::prelude::*;
 use orbital_paging::{Page, PageRequest};
@@ -14,15 +17,66 @@ use super::helpers::{
     job_to_summary, parse_job_status_filter, require_session, trace_server_result,
 };
 #[cfg(feature = "ssr")]
-use super::page_query;
-use super::types::JobSummary;
+use super::types::{clamp_page_list_limit, JobActionFailure, RetriedJob, MAX_PAGE_LIST_LIMIT};
+use super::types::{JobActionOutcome, JobSummary};
+
+/// What a person is doing to a job. [`authorize_job_action`] decides whether they may.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobAction {
+    /// Stop a waiting or running job.
+    Cancel,
+    /// Start a failed job again as a new job.
+    Retry,
+    /// Take a failed job off the failed list for good.
+    Drop,
+}
+
+/// The access check for every job action.
+///
+/// Today every action needs a session and Gauge permission `BosonAdmin`. Per-resource access
+/// (Run on the task type) replaces the body here, in one place.
 #[cfg(feature = "ssr")]
-use super::types::{clamp_page_list_limit, BOSON_LIST_FETCH_CAP};
+async fn authorize_job_action(ctx: &higgs::Higgs, action: JobAction) -> Result<(), ServerFnError> {
+    require_session(ctx)?;
+    let _ = action;
+    uf_product::permissions::require_permission(super::BOSON_ADMIN_PERMISSION).await
+}
+
+/// Whether the caller may see job arguments and run errors in the jobs lists.
+///
+/// Both can carry per-user data, and run errors are `BosonAdmin`-only in the runs lists, so the
+/// session-only jobs lists show them to `BosonAdmin` holders alone. Swap this together with
+/// [`authorize_job_action`] when per-resource access arrives.
 #[cfg(feature = "ssr")]
-use boson_backend::ListStart;
+async fn can_view_job_details() -> bool {
+    uf_product::permissions::has_permission(super::BOSON_ADMIN_PERMISSION).await
+}
+
+/// Blank the arguments and last error on rows the caller may not see in detail.
+#[cfg(feature = "ssr")]
+fn hide_job_details(items: &mut [JobSummary]) {
+    for job in items {
+        job.args_summary.clear();
+        job.last_error = None;
+    }
+}
+
+/// A plain reason for a job a bulk action couldn't touch, without coordinator internals.
+#[cfg(feature = "ssr")]
+fn action_failure_reason(error: &boson_core::BosonError) -> String {
+    use boson_core::BosonError;
+    match error {
+        BosonError::JobNotFound(_) => "it no longer exists".to_string(),
+        BosonError::InvalidConfig(_) => "it isn't a failed job".to_string(),
+        BosonError::RateLimited(_) => {
+            "its task type is at its rate limit; try again soon".to_string()
+        }
+        _ => "Boson couldn't complete it; try again".to_string(),
+    }
+}
 
 /// Cancel a job.
-#[uf_product_macros::server(permission = "BosonAdmin")]
+#[uf_product_macros::server]
 pub async fn cancel_job(
     /// Unique identifier of the job to cancel.
     job_id: String,
@@ -31,7 +85,7 @@ pub async fn cancel_job(
     let result = async {
         boson_backend::validate_job_id(&job_id).map_err(|e| ServerFnError::new(e.to_string()))?;
         let ctx = higgs::Higgs::from_request().await?;
-        require_session(&ctx)?;
+        authorize_job_action(&ctx, JobAction::Cancel).await?;
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
         backend
@@ -42,6 +96,101 @@ pub async fn cancel_job(
     .await;
     #[cfg(feature = "ssr")]
     trace_server_result("cancel_job", &result, None, Some(&id_for_trace), None);
+    result
+}
+
+#[cfg(feature = "ssr")]
+fn validate_job_ids(job_ids: &[String]) -> Result<(), ServerFnError> {
+    if job_ids.is_empty() {
+        return Err(ServerFnError::new("Choose at least one job"));
+    }
+    if job_ids.len() > MAX_PAGE_LIST_LIMIT as usize {
+        return Err(ServerFnError::new(format!(
+            "Choose at most {MAX_PAGE_LIST_LIMIT} jobs at once"
+        )));
+    }
+    for id in job_ids {
+        boson_backend::validate_job_id(id).map_err(|e| ServerFnError::new(e.to_string()))?;
+    }
+    Ok(())
+}
+
+/// Start failed jobs again, each as a new queued job enqueued by the session actor.
+///
+/// Each new job starts at attempt 1 with the same arguments and the task type's current config,
+/// and links back through `retried_from`. Jobs that can't be retried (not failed, unknown) land
+/// in [`JobActionOutcome::failed`] while the rest go ahead.
+#[uf_product_macros::server]
+pub async fn retry_jobs(
+    /// Ids of the failed jobs to retry (1 to 100).
+    job_ids: Vec<String>,
+) -> Result<JobActionOutcome, ServerFnError> {
+    let result = async {
+        validate_job_ids(&job_ids)?;
+        let ctx = higgs::Higgs::from_request().await?;
+        authorize_job_action(&ctx, JobAction::Retry).await?;
+        let actor_json = serde_json::to_value(ctx.actor())
+            .map_err(|e| ServerFnError::new(format!("Failed to read the session actor: {e}")))?;
+        let backend = super::helpers::boson_backend()?;
+        let backend = backend.as_ref();
+        let mut outcome = JobActionOutcome::default();
+        for from_job_id in job_ids {
+            match backend.retry_job(&from_job_id, actor_json.clone()).await {
+                Ok(job_id) => {
+                    let pool = backend
+                        .get_job(&job_id)
+                        .await
+                        .map_or_else(String::new, |j| j.pool);
+                    outcome.retried.push(RetriedJob {
+                        from_job_id,
+                        job_id,
+                        pool,
+                    });
+                }
+                Err(e) => outcome.failed.push(JobActionFailure {
+                    job_id: from_job_id,
+                    error: action_failure_reason(&e),
+                }),
+            }
+        }
+        Ok(outcome)
+    }
+    .await;
+    #[cfg(feature = "ssr")]
+    trace_server_result("retry_jobs", &result, None, None, None);
+    result
+}
+
+/// Drop failed jobs: they leave the failed list and never run again. Their runs stay.
+///
+/// Jobs that can't be dropped (not failed, unknown) land in [`JobActionOutcome::failed`] while
+/// the rest go ahead.
+#[uf_product_macros::server]
+pub async fn drop_jobs(
+    /// Ids of the failed jobs to drop (1 to 100).
+    job_ids: Vec<String>,
+) -> Result<JobActionOutcome, ServerFnError> {
+    let result = async {
+        validate_job_ids(&job_ids)?;
+        let ctx = higgs::Higgs::from_request().await?;
+        authorize_job_action(&ctx, JobAction::Drop).await?;
+        let backend = super::helpers::boson_backend()?;
+        let backend = backend.as_ref();
+        let mut outcome = JobActionOutcome::default();
+        for job_id in job_ids {
+            match backend.drop_failed_job(&job_id).await {
+                Ok(()) => outcome.dropped.push(job_id),
+                Err(e) => outcome.failed.push(JobActionFailure {
+                    job_id,
+                    error: action_failure_reason(&e),
+                }),
+            }
+        }
+        Ok(outcome)
+    }
+    .await;
+    #[cfg(feature = "ssr")]
+    trace_server_result("drop_jobs", &result, None, None, None);
     result
 }
 
@@ -67,7 +216,10 @@ pub async fn list_jobs_page(
             .list_jobs(status, offset as usize, (limit + 1) as usize)
             .await;
 
-        let dtos: Vec<JobSummary> = jobs.into_iter().map(job_to_summary).collect();
+        let mut dtos: Vec<JobSummary> = jobs.into_iter().map(job_to_summary).collect();
+        if !can_view_job_details().await {
+            hide_job_details(&mut dtos);
+        }
 
         let total_count: Option<u64> = if offset == 0 {
             Some(backend.count_jobs(status).await)
@@ -83,74 +235,127 @@ pub async fn list_jobs_page(
     result
 }
 
-/// Paginated jobs for DataTable with status + quick search filters.
+/// Key of the job just before `offset` in `filter`'s order, read forward by keyset.
+///
+/// Serves a page whose cursor doesn't fit the query; `None` when `offset` is 0.
+#[cfg(feature = "ssr")]
+async fn job_key_at_offset(
+    backend: &dyn boson_coordinator::BosonCoordinatorBackend,
+    filter: &boson_core::JobFilter,
+    offset: usize,
+) -> Option<boson_core::JobKey> {
+    let mut key: Option<boson_core::JobKey> = None;
+    let mut left = offset;
+    while left > 0 {
+        let chunk = left.min(MAX_PAGE_LIST_LIMIT as usize);
+        let rows = backend.list_jobs_after(filter, key.as_ref(), chunk).await;
+        let Some(last) = rows.last() else { break };
+        key = Some(boson_core::JobKey::from(last));
+        left -= rows.len();
+        if rows.len() < chunk {
+            break;
+        }
+    }
+    key
+}
+
+/// Fill `max_attempts` from each task type's current retry policy, one lookup per task.
+#[cfg(feature = "ssr")]
+pub(super) async fn fill_max_attempts<T>(
+    backend: &dyn boson_coordinator::BosonCoordinatorBackend,
+    items: &mut [T],
+    task_and_slot: impl Fn(&mut T) -> (&str, &mut Option<u32>),
+) {
+    let mut cache: std::collections::HashMap<String, Option<u32>> =
+        std::collections::HashMap::new();
+    for item in items.iter_mut() {
+        let (task, slot) = task_and_slot(item);
+        if !cache.contains_key(task) {
+            let max = backend
+                .get_task_config(task)
+                .await
+                .ok()
+                .map(|c| c.retry_policy.max_attempts);
+            cache.insert(task.to_string(), max);
+        }
+        *slot = cache.get(task).copied().flatten();
+    }
+}
+
+/// Paginated jobs for one Jobs tab, with filter rules and quick search.
+///
+/// `tab` is `active` (the default), `failed` or `finished`; see [`boson_backend::JobsTab`].
+/// Failed rows also carry their latest run's error and finish time.
 #[uf_product_macros::server]
 pub async fn list_jobs_datatable_page(
     /// `DataTable` paging/filter/search/sort request from the client.
     request: PageRequest,
+    /// Jobs tab key; unknown or missing is `active`.
+    tab: Option<String>,
 ) -> Result<Page<JobSummary>, ServerFnError> {
     let result = async {
+        use boson_backend::{JobsTab, ListStart};
+
         let ctx = higgs::Higgs::from_request().await?;
         require_session(&ctx)?;
         let limit = clamp_page_list_limit(request.limit);
-        let status_filter = page_query::extract_status_filter(&request);
-        let needs_memory_filter = !boson_backend::jobs_cursor_eligible(&request);
+        let tab = JobsTab::from_key(tab.as_deref().unwrap_or_default());
+        let backend = super::helpers::boson_backend()?;
+        let backend = backend.as_ref();
 
-        if needs_memory_filter {
-            let backend = super::helpers::boson_backend()?;
-            let backend = backend.as_ref();
-            let status = status_filter.as_deref().and_then(parse_job_status_filter);
+        let Some(filter) =
+            boson_backend::job_filter_from_request(&request, tab, chrono::Utc::now())
+        else {
+            return Ok(Page {
+                items: Vec::new(),
+                has_more: false,
+                total_count: request.is_first_page().then_some(0),
+                ..Page::default()
+            });
+        };
 
-            let jobs = backend.list_jobs(status, 0, BOSON_LIST_FETCH_CAP).await;
-            let mut dtos: Vec<JobSummary> = jobs.into_iter().map(job_to_summary).collect();
-
-            page_query::apply_jobs_datatable_query(&mut dtos, &request);
-
-            let total_count = if request.is_first_page() {
-                Some(dtos.len() as u64)
-            } else {
-                None
-            };
-
-            let sliced: Vec<JobSummary> = dtos
-                .into_iter()
-                .skip(request.offset as usize)
-                .take((limit + 1) as usize)
-                .collect();
-
-            Ok(Page::from_oversized(sliced, limit, total_count))
+        let key = match boson_backend::jobs_list_start(&request) {
+            ListStart::After(key) => key,
+            ListStart::Offset(offset) => job_key_at_offset(backend, &filter, offset).await,
+        };
+        let rows = backend
+            .list_jobs_after(&filter, key.as_ref(), (limit + 1) as usize)
+            .await;
+        // Count on the first page only; cursor pages report `None`.
+        let total_count = if request.is_first_page() {
+            backend.count_jobs_matching(&filter).await.ok()
         } else {
-            // Inline the page path so we do not re-enter list_jobs_page (double auth).
-            let backend = super::helpers::boson_backend()?;
-            let backend = backend.as_ref();
-            let status = status_filter.as_deref().and_then(parse_job_status_filter);
-            let start = boson_backend::jobs_list_start(&request);
-            let jobs = match &start {
-                ListStart::After(key) => {
-                    backend
-                        .list_jobs_after(status, key.as_ref(), (limit + 1) as usize)
-                        .await
+            None
+        };
+        let mut page = boson_backend::jobs_page_from_rows(
+            rows,
+            &request,
+            limit,
+            &ListStart::After(key),
+            total_count,
+        );
+
+        fill_max_attempts(backend, &mut page.items, |j| {
+            (j.task_name.as_str(), &mut j.max_attempts)
+        })
+        .await;
+        if tab == JobsTab::Failed {
+            for job in &mut page.items {
+                let last = backend
+                    .list_runs_after(&boson_core::RunFilter::job(&job.job_id), None, 1)
+                    .await
+                    .into_iter()
+                    .next();
+                if let Some(run) = last {
+                    job.failed_at = Some(run.finished_at.unwrap_or(run.started_at).to_rfc3339());
+                    job.last_error = run.error_message;
                 }
-                ListStart::Offset(offset) => {
-                    backend
-                        .list_jobs(status, *offset, (limit + 1) as usize)
-                        .await
-                }
-            };
-            // Count on the first page only, as before; cursor pages report `None`.
-            let total_count: Option<u64> = if request.offset == 0 {
-                Some(backend.count_jobs(status).await)
-            } else {
-                None
-            };
-            Ok(boson_backend::jobs_page_from_rows(
-                jobs,
-                &request,
-                limit,
-                &start,
-                total_count,
-            ))
+            }
         }
+        if !can_view_job_details().await {
+            hide_job_details(&mut page.items);
+        }
+        Ok(page)
     }
     .await;
     #[cfg(feature = "ssr")]

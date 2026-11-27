@@ -13,7 +13,7 @@
 //! ## Features
 //!
 //! - **Boson admin routes** — Provides the nested `/boson` route tree behind auth for
-//!   dashboard, tasks, queue, and runs. Mount once when the host router starts.
+//!   dashboard, tasks, jobs, and runs. Mount once when the host router starts.
 //!   [Get started](#mount-boson-routes)
 //! - **Dashboard KPIs** — Shows task, queue, and run counters on [`BosonRootPage`] via
 //!   [`get_dashboard_stats`] plus run-trend charts from [`get_run_stats_series`].
@@ -21,10 +21,12 @@
 //! - **Tasks browser** — Lists registered tasks and supports detail and config edits via
 //!   [`get_tasks`], [`get_task`], and [`update_task_config`].
 //!   [Get started](#browse-tasks)
-//! - **Queue inspector** — Lists queued and running jobs and lets operators cancel them via
-//!   [`list_jobs_page`] and [`cancel_job`]. [Get started](#inspect-queue)
-//! - **Runs browser** — Lists run attempts and opens detail pages via [`list_runs_page`]
-//!   and [`get_run`]. [Get started](#browse-runs)
+//! - **Jobs** — Lists waiting and running jobs and lets operators cancel them, and lists
+//!   failed jobs to retry or drop, via [`list_jobs_datatable_page`], [`cancel_job`],
+//!   [`retry_jobs`] and [`drop_jobs`]. [Get started](#inspect-jobs)
+//! - **Runs browser** — Lists run attempts by status, task and time, searches by id, and
+//!   opens detail pages via [`list_runs_datatable_page`] and [`get_run`].
+//!   [Get started](#browse-runs)
 //! - **Server function wrappers** — Exposes [`mod@server`] Higgs `#[server]` fns and DTO
 //!   re-exports backed by [`boson_backend`] pure mapping helpers.
 //!
@@ -51,7 +53,7 @@
 //! ```
 //!
 //! On success `/boson` resolves to the dashboard, `/boson/tasks` lists registered tasks,
-//! and nested queue and run routes load their pages. Unauthenticated sessions are rejected
+//! and nested jobs and run routes load their pages. Unauthenticated sessions are rejected
 //! by server functions — see root `SECURITY.md`.
 //!
 //! ## Dashboard KPIs
@@ -124,36 +126,38 @@
 //! after validation. Task list/detail fail closed when task config cannot be loaded
 //! (`Failed to load task config:…`) instead of substituting silent defaults.
 //!
-//! ## Inspect queue
+//! ## Inspect jobs
 //!
-//! Queue pages show jobs waiting for or actively using workers.
-//! [`BosonQueuePage`] loads [`list_jobs_page`] with optional status filters; operators call
-//! [`cancel_job`] to stop a queued or running job. Use these routes when draining a backlog
-//! or stopping a runaway enqueue.
+//! [`BosonJobsPage`] opens on Active: the queued and running jobs, the ones someone can act
+//! on. Failed lists jobs that used every attempt, and Finished the ones that succeeded or
+//! were canceled. Each page reads [`list_jobs_datatable_page`] with the tab's key. Cancel
+//! asks first and then names the canceled job; on Failed, [`retry_jobs`] starts jobs again
+//! from attempt 1 as the person who pressed Retry, and [`drop_jobs`] takes them off the list.
+//! Use this page when draining a backlog, stopping a runaway enqueue or clearing dead
+//! letters. `/boson/queue` redirects here.
 //!
 //! **Prerequisites:** Routes mounted; job ids must pass `boson_backend::validate_job_id`.
 //!
 //! ```rust,ignore
-//! use boson_app::{BosonQueuePage, list_jobs_page, cancel_job, JobSummary};
+//! use boson_app::{retry_jobs, cancel_job, BosonJobsPage};
 //! use leptos::prelude::*;
 //!
-//! // BosonQueuePage loads list_jobs_page with optional status filters:
-//! view! { <BosonQueuePage /> };
-//! let page = list_jobs_page(0, 20, None).await?;
-//! let first: &JobSummary = page.items.first().expect("queued job");
-//! assert_eq!(first.job_id, "job-1");
-//!
+//! view! { <BosonJobsPage /> };
 //! cancel_job("job-1".into()).await?;
+//! let outcome = retry_jobs(vec!["job-2".into()]).await?;
+//! assert_eq!(outcome.retried[0].from_job_id, "job-2");
 //! ```
 //!
-//! On success the page returns [`JobSummary`] rows with status chips and cancel transitions
-//! a job to canceled when the coordinator accepts the request. Blank or slash-containing ids
-//! are rejected before lookup.
+//! On success cancel moves a job to canceled, and each retried job comes back as a new
+//! queued job in [`JobActionOutcome::retried`]. Jobs an action can't touch (not failed,
+//! unknown) are listed in [`JobActionOutcome::failed`] while the rest go ahead.
 //!
 //! ## Browse runs
 //!
 //! Run pages list execution attempts and full error detail on the detail view.
-//! [`BosonRunsIndexPage`] loads [`list_runs_page`] with optional filters;
+//! [`BosonRunsIndexPage`] loads [`list_runs_datatable_page`] with status, task and time
+//! filters from the URL (`?status=&task=&from=&to=`) and pages by keyset cursor at any
+//! history size;
 //! [`BosonRunDetailPage`] calls [`get_run`] for one run id. Open these routes when operators
 //! audit failures or trace a job back to its attempts.
 //!
@@ -194,8 +198,9 @@
 //! | `/boson/tasks` | [`BosonTasksIndexPage`] | [`get_tasks_page`], [`get_tasks_datatable_page`] |
 //! | `/boson/tasks/:task_name` | [`BosonTaskDetailPage`] | [`get_task`] |
 //! | `/boson/tasks/:task_name/config` (email-verified) | [`BosonTaskConfigPage`] | [`get_task_config`], [`update_task_config`], [`list_gluon_pools_for_boson_task_config`] |
-//! | `/boson/queue` | [`BosonQueuePage`] | [`list_jobs_page`], [`list_jobs_datatable_page`], [`cancel_job`] |
-//! | `/boson/runs` | [`BosonRunsIndexPage`] | [`list_runs_page`], [`list_runs_datatable_page`] |
+//! | `/boson/jobs` (`?tab=active`, `failed`, `finished`) | [`BosonJobsPage`] | [`list_jobs_datatable_page`], [`cancel_job`], [`retry_jobs`], [`drop_jobs`] |
+//! | `/boson/queue` | [`BosonQueueRedirect`] | redirects to `/boson/jobs` |
+//! | `/boson/runs` | [`BosonRunsIndexPage`] | [`list_runs_datatable_page`], [`list_task_names`] |
 //! | `/boson/runs/:id` | [`BosonRunDetailPage`] | [`get_run`] |
 //!
 //! ## Examples
@@ -208,7 +213,7 @@
 //!
 //! - [`BosonLayout`] — shared app bar / nav shell wrapping every route.
 //! - [`mod@server`] — server functions and DTOs backing the UI.
-//! - [`mod@pages`] — route page components (dashboard, tasks, queue, runs).
+//! - [`mod@pages`] — route page components (dashboard, tasks, jobs, runs).
 //! - `components` — shared Orbital-composed UI pieces (tables, badges, help).
 //! - [`permissions::BosonPermission`] — permission manifest for `BosonAdmin`.
 //! - [`live`] / [`photon_ws`] — client poll-tick and SSR route merge for live updates.
@@ -243,19 +248,20 @@ pub mod server;
 
 pub use layout::BosonLayout;
 pub use lazy_routes::{
-    prefetch_family, BosonLayoutRouteView, BosonQueueRoute, BosonRootRoute, BosonRunDetailRoute,
+    prefetch_family, BosonJobsRoute, BosonLayoutRouteView, BosonRootRoute, BosonRunDetailRoute,
     BosonRunsIndexRoute, BosonTaskDetailRoute, BosonTasksIndexRoute, BosonVerifiedTaskConfigRoute,
 };
 pub use pages::{
-    BosonQueuePage, BosonRootPage, BosonRunDetailPage, BosonRunsIndexPage, BosonTaskConfigPage,
-    BosonTaskDetailPage, BosonTasksIndexPage,
+    BosonJobsPage, BosonQueueRedirect, BosonRootPage, BosonRunDetailPage, BosonRunsIndexPage,
+    BosonTaskConfigPage, BosonTaskDetailPage, BosonTasksIndexPage,
 };
 pub use server::{
-    cancel_job, get_dashboard_stats, get_run, get_run_stats_series, get_task, get_task_config,
-    get_tasks, get_tasks_datatable_page, get_tasks_page, list_gluon_pools_for_boson_task_config,
-    list_jobs_datatable_page, list_jobs_page, list_runs_datatable_page, list_runs_page,
-    update_task_config, BosonPoolProvider, DashboardStats, GluonPoolPickRow, JobSummary,
-    RunSummary, TaskConfigDto, TaskSummary, BOSON_ADMIN_PERMISSION,
+    cancel_job, drop_jobs, get_dashboard_stats, get_run, get_run_stats_series, get_task,
+    get_task_config, get_tasks, get_tasks_datatable_page, get_tasks_page,
+    list_gluon_pools_for_boson_task_config, list_jobs_datatable_page, list_jobs_page,
+    list_runs_datatable_page, list_runs_page, list_task_names, retry_jobs, update_task_config,
+    BosonPoolProvider, DashboardStats, GluonPoolPickRow, JobActionOutcome, JobSummary, RunSummary,
+    TaskConfigDto, TaskSummary, BOSON_ADMIN_PERMISSION,
 };
 
 uf_app! {
@@ -274,7 +280,7 @@ uf_app! {
 ///
 /// Leaf pages are [`LazyRoute`](leptos_router::LazyRoute) views so
 /// `cargo leptos --split` can emit a separate WASM chunk for this family.
-/// Registers dashboard, task, queue, and run routes. The task config route additionally
+/// Registers dashboard, task, jobs, and run routes. The task config route additionally
 /// requires a verified email. Intended to be used inside a host `<Routes>` component, e.g.
 /// `<BosonRoutes />`.
 #[allow(missing_docs)]
@@ -287,7 +293,8 @@ pub fn BosonRoutes() -> impl leptos_router::MatchNestedRoutes + Clone {
             <Route path=path!("tasks") view={Lazy::<BosonTasksIndexRoute>::new()} />
             <Route path=path!("tasks/:task_name") view={Lazy::<BosonTaskDetailRoute>::new()} />
             <Route path=path!("tasks/:task_name/config") view={Lazy::<BosonVerifiedTaskConfigRoute>::new()} />
-            <Route path=path!("queue") view={Lazy::<BosonQueueRoute>::new()} />
+            <Route path=path!("jobs") view={Lazy::<BosonJobsRoute>::new()} />
+            <Route path=path!("queue") view=BosonQueueRedirect />
             <Route path=path!("runs") view={Lazy::<BosonRunsIndexRoute>::new()} />
             <Route path=path!("runs/:id") view={Lazy::<BosonRunDetailRoute>::new()} />
         </ParentRoute>

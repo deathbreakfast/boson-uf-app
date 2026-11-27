@@ -78,10 +78,6 @@ pub fn pool_help() -> AnyView {
     )
 }
 
-pub fn priority_help() -> AnyView {
-    caption("Job priority within the pool. Lower numbers run sooner when workers are contended.")
-}
-
 pub const fn max_attempts_hint() -> &'static str {
     "Total tries including the first run. Set to 1 to disable retries."
 }

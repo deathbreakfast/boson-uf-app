@@ -1,6 +1,6 @@
 //! Re-export `DataTable` query helpers from [`boson_backend`].
 
 pub use boson_backend::{
-    apply_jobs_datatable_query, apply_runs_datatable_query, extract_status_filter, job_status_key,
-    quick_search_text, resolve_job_filter, run_status_key,
+    job_filter_from_request, job_status_key, parse_time_range, quick_search_text,
+    run_filter_from_request, run_status_key, JobsTab, FROM_FIELD, TO_FIELD,
 };
