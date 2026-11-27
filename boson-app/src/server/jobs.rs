@@ -42,6 +42,39 @@ async fn authorize_job_action(ctx: &higgs::Higgs, action: JobAction) -> Result<(
     uf_product::permissions::require_permission(super::BOSON_ADMIN_PERMISSION).await
 }
 
+/// Whether the caller may see job arguments and run errors in the jobs lists.
+///
+/// Both can carry per-user data, and run errors are `BosonAdmin`-only in the runs lists, so the
+/// session-only jobs lists show them to `BosonAdmin` holders alone. Swap this together with
+/// [`authorize_job_action`] when per-resource access arrives.
+#[cfg(feature = "ssr")]
+async fn can_view_job_details() -> bool {
+    uf_product::permissions::has_permission(super::BOSON_ADMIN_PERMISSION).await
+}
+
+/// Blank the arguments and last error on rows the caller may not see in detail.
+#[cfg(feature = "ssr")]
+fn hide_job_details(items: &mut [JobSummary]) {
+    for job in items {
+        job.args_summary.clear();
+        job.last_error = None;
+    }
+}
+
+/// A plain reason for a job a bulk action couldn't touch, without coordinator internals.
+#[cfg(feature = "ssr")]
+fn action_failure_reason(error: &boson_core::BosonError) -> String {
+    use boson_core::BosonError;
+    match error {
+        BosonError::JobNotFound(_) => "it no longer exists".to_string(),
+        BosonError::InvalidConfig(_) => "it isn't a failed job".to_string(),
+        BosonError::RateLimited(_) => {
+            "its task type is at its rate limit; try again soon".to_string()
+        }
+        _ => "Boson couldn't complete it; try again".to_string(),
+    }
+}
+
 /// Cancel a job.
 #[uf_product_macros::server]
 pub async fn cancel_job(
@@ -116,7 +149,7 @@ pub async fn retry_jobs(
                 }
                 Err(e) => outcome.failed.push(JobActionFailure {
                     job_id: from_job_id,
-                    error: e.to_string(),
+                    error: action_failure_reason(&e),
                 }),
             }
         }
@@ -149,7 +182,7 @@ pub async fn drop_jobs(
                 Ok(()) => outcome.dropped.push(job_id),
                 Err(e) => outcome.failed.push(JobActionFailure {
                     job_id,
-                    error: e.to_string(),
+                    error: action_failure_reason(&e),
                 }),
             }
         }
@@ -183,7 +216,10 @@ pub async fn list_jobs_page(
             .list_jobs(status, offset as usize, (limit + 1) as usize)
             .await;
 
-        let dtos: Vec<JobSummary> = jobs.into_iter().map(job_to_summary).collect();
+        let mut dtos: Vec<JobSummary> = jobs.into_iter().map(job_to_summary).collect();
+        if !can_view_job_details().await {
+            hide_job_details(&mut dtos);
+        }
 
         let total_count: Option<u64> = if offset == 0 {
             Some(backend.count_jobs(status).await)
@@ -315,6 +351,9 @@ pub async fn list_jobs_datatable_page(
                     job.last_error = run.error_message;
                 }
             }
+        }
+        if !can_view_job_details().await {
+            hide_job_details(&mut page.items);
         }
         Ok(page)
     }

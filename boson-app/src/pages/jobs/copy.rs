@@ -207,7 +207,7 @@ pub fn action_failures(verb: &str, outcome: &JobActionOutcome) -> Option<String>
         outcome
             .failed
             .iter()
-            .map(|f| format!("Couldn't {verb} job {}: {}", short_id(&f.job_id), f.error))
+            .map(|f| format!("Couldn't {verb} job {}: {}.", short_id(&f.job_id), f.error))
             .collect::<Vec<_>>()
             .join(" "),
     )

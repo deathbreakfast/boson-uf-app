@@ -127,7 +127,7 @@ pub struct RetriedJob {
 pub struct JobActionFailure {
     /// The job the action was for.
     pub job_id: String,
-    /// What went wrong, in the coordinator's words.
+    /// Why, in plain words ("it isn't a failed job"); coordinator internals stay on the server.
     pub error: String,
 }
 

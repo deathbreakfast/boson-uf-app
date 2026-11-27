@@ -506,3 +506,30 @@ fn ops_path_helpers_drop_encoding_sad_path() {
         "dropping boson_runs_job_filter_path reopens query-value smuggling via job ids"
     );
 }
+
+#[test]
+fn jobs_lists_hide_details_without_admin_sad_path() {
+    let jobs = read_app("server/jobs.rs");
+    for list in [
+        "pub async fn list_jobs_page",
+        "pub async fn list_jobs_datatable_page",
+    ] {
+        let start = jobs.find(list).unwrap_or_else(|| panic!("{list}"));
+        let rest = &jobs[start..];
+        let end = rest[1..]
+            .find("\n#[uf_product_macros::server")
+            .map_or(rest.len(), |i| i + 1);
+        let body = &rest[..end];
+        assert!(
+            body.contains("if !can_view_job_details().await") && body.contains("hide_job_details("),
+            "{list} must blank job arguments and run errors for callers without BosonAdmin"
+        );
+    }
+    let start = jobs
+        .find("async fn can_view_job_details")
+        .expect("can_view_job_details");
+    assert!(
+        jobs[start..start + 200].contains("has_permission(super::BOSON_ADMIN_PERMISSION)"),
+        "job details must stay behind BosonAdmin, as run errors are in the runs lists"
+    );
+}
