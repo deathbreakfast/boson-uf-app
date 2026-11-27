@@ -1,89 +1,62 @@
 use leptos::prelude::*;
 use orbital::components::{Card, FormHint, SpacingSize};
-use orbital::primitives::{
-    Flex, InfoLabel, InfoLabelInfo, Input, InputAppearance, InputType, Label, Select,
-};
+use orbital::primitives::{Field, Flex, Select};
 
-use crate::components::{basic_config_help, pool_field_help, BosonHelpCardHeader};
+use crate::components::BosonHelpCardHeader;
 use crate::server::GluonPoolPickRow;
 
-/// Basic configuration form section (pool and priority).
+use super::SettingsNumberField;
+
+/// "Where it runs" card: queue (pool) and priority.
 #[component]
 #[allow(clippy::needless_pass_by_value)]
 pub fn TaskConfigForm(
-    /// Two-way signal holding the resource pool identifier.
+    /// Two-way signal holding the queue (pool) id.
     pool: RwSignal<String>,
-    /// Two-way signal holding the priority.
+    /// Two-way signal holding the priority text.
     priority_str: RwSignal<String>,
-    /// List of pool options.
+    /// Field message when the priority doesn't parse.
+    priority_error: Signal<Option<String>>,
+    /// Priority the task's code registers.
+    default_priority: i32,
+    /// Queues the host offers.
     #[prop(default = Vec::new())]
     pool_options: Vec<GluonPoolPickRow>,
 ) -> impl IntoView {
-    let show_select = !pool_options.is_empty();
-    let opts_for_select = pool_options;
+    let opts_hint = pool_options.clone();
+    let priority_hint =
+        format!("Lower runs sooner. -1000 to 10000. The code's default is {default_priority}.");
 
     view! {
         <Card>
             <BosonHelpCardHeader
-                title="Basic Configuration"
-                description="Choose where this task runs and its default queue priority."
-                info=basic_config_help()
+                title="Where it runs"
+                description="The queue that runs this task type and its place in that queue."
             />
             <Flex vertical=true gap=SpacingSize::Size160.flex_gap() padding=SpacingSize::Size160.inset()>
-                <Flex vertical=true gap=SpacingSize::Size40.flex_gap()>
-                    <InfoLabel>
-                        <Label>"Pool"</Label>
-                        <InfoLabelInfo slot>
-                            {pool_field_help()}
-                        </InfoLabelInfo>
-                    </InfoLabel>
-                    {move || {
-                        if show_select {
-                            let opts = opts_for_select.clone();
-                            let opts_hint = opts.clone();
-                            view! {
-                                <div data-testid="task-config-pool">
-                                    <Select bind=pool>
-                                        <For
-                                            each=move || opts.clone()
-                                            key=|o| o.id.clone()
-                                            children=move |o| {
-                                                let v = o.id.clone();
-                                                let lbl = o.label;
-                                                view! { <option value=v>{lbl}</option> }
-                                            }
-                                        />
-                                    </Select>
-                                </div>
-                                <FormHint>{move || {
-                                    let p = pool.get();
-                                    opts_hint
-                                        .iter()
-                                        .find(|o| o.id == p)
-                                        .map_or_else(String::new, |o| o.detail.clone())
-                                }}</FormHint>
-                            }
-                            .into_any()
-                        } else {
-                            view! {
-                                <Input bind=pool />
-                                <FormHint>"Default: \"global\". Configure Gluon virtual pools to pick from a list."</FormHint>
-                            }
-                            .into_any()
-                        }
-                    }}
-                </Flex>
-                <Flex vertical=true gap=SpacingSize::Size40.flex_gap()>
-                    <Label>"Default Priority"</Label>
-                    <Input
-                        bind=priority_str
-                        appearance=InputAppearance {
-                            input_type: Signal::from(InputType::Number),
-                            ..Default::default()
-                        }
-                    />
-                    <FormHint>"Default: 1. Lower value = higher priority (runs sooner)"</FormHint>
-                </Flex>
+                <Field label="Queue">
+                    <div data-testid="task-config-pool">
+                        <Select bind=pool>
+                            {pool_options.into_iter().map(|o| {
+                                view! { <option value=o.id>{o.label}</option> }
+                            }).collect_view()}
+                        </Select>
+                    </div>
+                    <FormHint>{move || {
+                        let p = pool.get();
+                        opts_hint
+                            .iter()
+                            .find(|o| o.id == p)
+                            .map_or_else(String::new, |o| o.detail.clone())
+                    }}</FormHint>
+                </Field>
+                <SettingsNumberField
+                    label="Priority"
+                    testid="task-config-priority"
+                    value=priority_str
+                    error=priority_error
+                    hint=priority_hint
+                />
             </Flex>
         </Card>
     }

@@ -49,6 +49,7 @@ fn sample_task(name: &str) -> TaskSummary {
         jobs_queued: 0,
         runs_total: 0,
         success_rate_pct: None,
+        owner: None,
     }
 }
 
@@ -352,6 +353,7 @@ fn apply_task_config_update_merges_fields_happy_path() {
             backoff_multiplier: 1.5,
             max_delay_ms: 500,
         }),
+        ..Default::default()
     };
     let now = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
     apply_task_config_update(&mut config, &req, now);
@@ -507,6 +509,7 @@ fn pool_change(pool: &str) -> UpdateTaskConfigRequest {
         priority: None,
         pool: Some(pool.to_string()),
         retry_policy: None,
+        ..Default::default()
     }
 }
 
@@ -531,6 +534,7 @@ fn validate_pool_offered_accepts_offered_pool_happy_path() {
         priority: Some(3),
         pool: None,
         retry_policy: None,
+        ..Default::default()
     };
     assert_eq!(
         validate_pool_offered(&unchanged, "global", &offered),
@@ -625,12 +629,14 @@ fn validate_task_config_update_accepts_in_range_happy_path() {
             backoff_multiplier: 2.0,
             max_delay_ms: 1_000,
         }),
+        ..Default::default()
     };
     validate_task_config_update(&req).expect("in range");
     validate_task_config_update(&UpdateTaskConfigRequest {
         priority: None,
         pool: None,
         retry_policy: None,
+        ..Default::default()
     })
     .expect("empty update");
 }
@@ -642,6 +648,7 @@ fn validate_task_config_update_rejects_out_of_range_sad() {
             priority: Some(MAX_TASK_PRIORITY + 1),
             pool: None,
             retry_policy: None,
+            ..Default::default()
         })
         .expect_err("priority"),
         BosonInputError::PriorityOutOfRange
@@ -651,6 +658,7 @@ fn validate_task_config_update_rejects_out_of_range_sad() {
             priority: None,
             pool: Some("a/b".into()),
             retry_policy: None,
+            ..Default::default()
         })
         .expect_err("pool"),
         BosonInputError::InvalidPool
@@ -660,6 +668,7 @@ fn validate_task_config_update_rejects_out_of_range_sad() {
             priority: None,
             pool: Some(String::new()),
             retry_policy: None,
+            ..Default::default()
         })
         .expect_err("blank pool"),
         BosonInputError::InvalidPool
@@ -674,6 +683,7 @@ fn validate_task_config_update_rejects_out_of_range_sad() {
                 backoff_multiplier: 2.0,
                 max_delay_ms: 10,
             }),
+            ..Default::default()
         })
         .expect_err("attempts"),
         BosonInputError::InvalidMaxAttempts
@@ -688,6 +698,7 @@ fn validate_task_config_update_rejects_out_of_range_sad() {
                 backoff_multiplier: 2.0,
                 max_delay_ms: 10,
             }),
+            ..Default::default()
         })
         .expect_err("delay"),
         BosonInputError::InvalidRetryDelay
@@ -702,6 +713,7 @@ fn validate_task_config_update_rejects_out_of_range_sad() {
                 backoff_multiplier: 0.0,
                 max_delay_ms: 10,
             }),
+            ..Default::default()
         })
         .expect_err("multiplier"),
         BosonInputError::InvalidBackoffMultiplier
@@ -723,4 +735,307 @@ fn format_task_config_load_error_never_empty_prefix_sad() {
     let msg = format_task_config_load_error("");
     assert_eq!(msg, "Failed to load task config: ");
     assert!(!msg.contains("default_for"));
+}
+
+fn retry(max_attempts: u32, base: u64, mult: f64, max: u64) -> RetryPolicyDto {
+    RetryPolicyDto {
+        max_attempts,
+        base_delay_ms: base,
+        backoff_multiplier: mult,
+        max_delay_ms: max,
+    }
+}
+
+#[test]
+fn rate_limit_and_idempotency_round_trip_happy_path() {
+    let mut config = TaskConfig::default_for("alpha");
+    let req = UpdateTaskConfigRequest {
+        rate_limit_policy: Some(RateLimitPolicyDto {
+            max_in_flight: 10,
+            max_enqueue_per_second: 5,
+        }),
+        idempotency_mode: Some(IdempotencyModeDto::AtLeastOnce),
+        ..Default::default()
+    };
+    apply_task_config_update(&mut config, &req, Utc::now());
+    let dto = task_config_to_dto(&config);
+    assert_eq!(dto.rate_limit_policy.max_in_flight, 10);
+    assert_eq!(dto.rate_limit_policy.max_enqueue_per_second, 5);
+    assert_eq!(dto.idempotency_mode, IdempotencyModeDto::AtLeastOnce);
+}
+
+#[test]
+fn idempotency_mode_unset_reads_exactly_once_sad() {
+    let mut config = TaskConfig::default_for("alpha");
+    config.idempotency_mode = None;
+    assert_eq!(
+        task_config_to_dto(&config).idempotency_mode,
+        IdempotencyModeDto::ExactlyOnce
+    );
+    // An update without limits leaves them alone.
+    config.rate_limit_policy.max_in_flight = 4;
+    apply_task_config_update(&mut config, &UpdateTaskConfigRequest::default(), Utc::now());
+    assert_eq!(config.rate_limit_policy.max_in_flight, 4);
+    assert_eq!(config.idempotency_mode, None);
+}
+
+#[test]
+fn short_id_keeps_tail_happy_path() {
+    assert_eq!(short_id("00000000-0000-4000-9000-000000000412"), "…0412");
+    assert_eq!(short_id("abc"), "abc");
+}
+
+#[test]
+fn actor_label_maps_each_actor_happy_path() {
+    let lookup = |id: &str| (id == "user:1").then(|| "Ada Mensah".to_string());
+    assert_eq!(
+        actor_label(&serde_json::json!({"System": {"operation": "x"}}), lookup),
+        "System"
+    );
+    assert_eq!(
+        actor_label(&serde_json::json!({"User": {"user_id": "user:1"}}), lookup),
+        "Ada Mensah"
+    );
+    assert_eq!(
+        actor_label(
+            &serde_json::json!({"ServiceUser": {"service_name": "svc:orders"}}),
+            lookup
+        ),
+        "orders app"
+    );
+}
+
+#[test]
+fn actor_label_unknown_shapes_sad() {
+    let lookup = |_: &str| None;
+    assert_eq!(
+        actor_label(&serde_json::json!({"User": {"user_id": "user:9"}}), lookup),
+        "user:9"
+    );
+    assert_eq!(actor_label(&serde_json::json!({}), lookup), "Unknown");
+    assert_eq!(actor_label(&serde_json::json!("System"), lookup), "Unknown");
+}
+
+#[test]
+fn job_label_adds_first_short_text_arg_happy_path() {
+    let params = serde_json::json!({"batch": "batch-0042"});
+    assert_eq!(job_label("job-0087", &params), "…0087 · batch batch-0042");
+}
+
+#[test]
+fn job_label_skips_long_or_non_text_args_sad() {
+    let long = "x".repeat(41);
+    assert_eq!(
+        job_label("job-0087", &serde_json::json!({"n": 3, "body": long})),
+        "…0087"
+    );
+    assert_eq!(job_label("job-0087", &serde_json::json!(null)), "…0087");
+}
+
+#[test]
+fn run_job_info_maps_job_happy_path() {
+    let mut job = sample_job_core("job-0087", "alpha", JobStatus::Failed);
+    job.actor_json = serde_json::json!({"System": {"operation": "seed"}});
+    let info = run_job_info(&job, |_| None);
+    assert_eq!(info.status, JobStatusDto::Failed);
+    assert_eq!(info.pool, "global");
+    assert_eq!(info.started_by, "System");
+    assert_eq!(info.label, "…0087");
+}
+
+#[test]
+fn format_duration_ms_units_happy_path() {
+    assert_eq!(format_duration_ms(12), "12 ms");
+    assert_eq!(format_duration_ms(30_000), "30.0 s");
+    assert_eq!(format_duration_ms(125_000), "2 min 5 s");
+    assert_eq!(format_duration_ms(120_000), "2 min");
+}
+
+#[test]
+fn format_wait_ms_units_happy_path() {
+    assert_eq!(format_wait_ms(1_000), "1 s");
+    assert_eq!(format_wait_ms(1_500), "1.5 s");
+    assert_eq!(format_wait_ms(300_000), "5 min");
+    assert_eq!(format_wait_ms(3_600_000), "1 h");
+}
+
+#[test]
+fn retry_schedule_sentence_lists_waits_happy_path() {
+    assert_eq!(
+        retry_schedule_sentence(&retry(3, 1_000, 2.0, 300_000)),
+        "With these values: retry after 1 s, then 2 s. A job gives up after 3 attempts."
+    );
+    assert_eq!(
+        retry_schedule_sentence(&retry(6, 1_000, 2.0, 3_000)),
+        "With these values: retry after 1 s, then 2 s, then 3 s, and so on up to 3 s. A job gives up after 6 attempts."
+    );
+}
+
+#[test]
+fn retry_schedule_sentence_one_attempt_sad() {
+    assert_eq!(
+        retry_schedule_sentence(&retry(1, 1_000, 2.0, 300_000)),
+        "With these values: no retries. A job gives up after 1 attempt."
+    );
+    assert_eq!(
+        retry_wait_ms(&retry(3, 1_000, f64::INFINITY, 9_000), 2),
+        9_000
+    );
+}
+
+#[test]
+fn settings_sentence_reads_config_happy_path() {
+    let mut config = TaskConfig::default_for("alpha");
+    config.pool = "global".into();
+    config.priority = 1;
+    config.retry_policy = RetryPolicy {
+        max_attempts: 3,
+        base_delay_ms: 1_000,
+        backoff_multiplier: 2.0,
+        max_delay_ms: 300_000,
+    };
+    config.rate_limit_policy.max_in_flight = 0;
+    config.updated_at = Utc.with_ymd_and_hms(2026, 11, 18, 9, 0, 0).unwrap();
+    assert_eq!(
+        settings_sentence(&config),
+        "Runs on global at priority 1, up to 3 attempts, waiting 1 s then doubling up to 5 min. Changed on Nov 18, 2026."
+    );
+}
+
+#[test]
+fn settings_sentence_single_attempt_with_limit_sad() {
+    let mut config = TaskConfig::default_for("alpha");
+    config.retry_policy.max_attempts = 1;
+    config.rate_limit_policy.max_in_flight = 10;
+    let s = settings_sentence(&config);
+    assert!(s.contains("up to 1 attempt."), "{s}");
+    assert!(s.contains("At most 10 waiting or running at once."), "{s}");
+}
+
+#[test]
+fn task_arguments_from_signature_reads_properties_happy_path() {
+    let sig = r#"{"description":"Syncs a batch.","properties":{"invoice_batch":{"type":"string","description":"The batch."}}}"#;
+    let rows = task_arguments_from_signature(sig);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].name, "invoice_batch");
+    assert_eq!(rows[0].type_label, "Text");
+    assert_eq!(rows[0].description.as_deref(), Some("The batch."));
+    assert_eq!(
+        task_description_from_signature(sig).as_deref(),
+        Some("Syncs a batch.")
+    );
+}
+
+#[test]
+fn task_arguments_from_signature_bad_json_sad() {
+    assert_eq!(
+        task_arguments_from_signature("{}"),
+        Vec::<TaskArgumentRow>::new()
+    );
+    assert_eq!(
+        task_arguments_from_signature("not json"),
+        Vec::<TaskArgumentRow>::new()
+    );
+    assert_eq!(
+        task_arguments_from_signature(r#"{"args":[]}"#),
+        Vec::<TaskArgumentRow>::new()
+    );
+    assert_eq!(
+        task_description_from_signature(r#"{"description":"  "}"#),
+        None
+    );
+}
+
+#[test]
+fn at_in_flight_limit_happy_path() {
+    assert!(at_in_flight_limit(10, 10));
+    assert!(!at_in_flight_limit(2, 10));
+}
+
+#[test]
+fn at_in_flight_limit_zero_means_none_sad() {
+    assert!(!at_in_flight_limit(50, 0));
+}
+
+#[test]
+fn task_path_helpers_encode_happy_path() {
+    assert_eq!(
+        boson_task_settings_path("a b"),
+        "/boson/tasks/a%20b?tab=settings"
+    );
+    assert_eq!(
+        boson_task_failed_runs_path("a b"),
+        "/boson/runs?task=a%20b&status=failed"
+    );
+    assert_eq!(boson_task_waiting_jobs_path("x"), "/boson/jobs?task=x");
+    assert_eq!(boson_queue_pool_path("global"), "/boson/jobs?pool=global");
+}
+
+#[test]
+fn validate_task_config_update_caps_attempts_at_twenty_sad() {
+    assert_eq!(
+        validate_task_config_update(&UpdateTaskConfigRequest {
+            retry_policy: Some(retry(21, 1_000, 2.0, 1_000)),
+            ..Default::default()
+        })
+        .unwrap_err(),
+        BosonInputError::InvalidMaxAttempts
+    );
+    validate_task_config_update(&UpdateTaskConfigRequest {
+        retry_policy: Some(retry(20, 1_000, 2.0, 1_000)),
+        ..Default::default()
+    })
+    .expect("20 is allowed");
+}
+
+#[test]
+fn filter_tasks_by_query_matches_owner_not_signature_happy_path() {
+    let mut a = sample_task("alpha");
+    a.owner = Some("Billing engineering".into());
+    a.signature_json = r#"{"properties":{"zzz":{}}}"#.into();
+    let mut tasks = vec![a, sample_task("beta")];
+    filter_tasks_by_query(&mut tasks, Some("billing"));
+    assert_eq!(tasks.len(), 1);
+    filter_tasks_by_query(&mut tasks, Some("zzz"));
+    assert_eq!(tasks, Vec::<TaskSummary>::new());
+}
+
+#[test]
+fn parse_whole_number_field_accepts_range_happy_path() {
+    assert_eq!(parse_whole_number_field(" 5 ", 1, 20), Ok(5));
+    assert_eq!(parse_whole_number_field("-1000", -1000, 10_000), Ok(-1000));
+}
+
+#[test]
+fn parse_whole_number_field_rejects_decimals_and_range_sad() {
+    let msg = "Enter a whole number from 1 to 20.".to_string();
+    assert_eq!(parse_whole_number_field("1.5", 1, 20), Err(msg.clone()));
+    assert_eq!(parse_whole_number_field("21", 1, 20), Err(msg.clone()));
+    assert_eq!(parse_whole_number_field("", 1, 20), Err(msg));
+}
+
+#[test]
+fn parse_wait_seconds_field_converts_happy_path() {
+    assert_eq!(parse_wait_seconds_field("1.5"), Ok(1_500));
+    assert_eq!(parse_wait_seconds_field("300"), Ok(300_000));
+    assert_eq!(ms_to_seconds_field(1_500), "1.5");
+    assert_eq!(ms_to_seconds_field(300_000), "300");
+}
+
+#[test]
+fn parse_wait_seconds_field_rejects_bad_input_sad() {
+    assert!(parse_wait_seconds_field("-1").is_err());
+    assert!(parse_wait_seconds_field("abc").is_err());
+    assert!(parse_wait_seconds_field("86401").is_err());
+}
+
+#[test]
+fn parse_multiplier_field_happy_path() {
+    assert_eq!(parse_multiplier_field("2"), Ok(2.0));
+}
+
+#[test]
+fn parse_multiplier_field_rejects_zero_sad() {
+    assert!(parse_multiplier_field("0").is_err());
+    assert!(parse_multiplier_field("inf").is_err());
 }

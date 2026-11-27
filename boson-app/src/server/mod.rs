@@ -55,8 +55,10 @@ pub use gluon_pools::list_gluon_pools_for_boson_task_config;
 pub use jobs::{
     cancel_job, drop_jobs, list_jobs_datatable_page, list_jobs_page, retry_jobs, JobAction,
 };
-pub use runs::{get_run, list_runs_datatable_page, list_runs_page, list_task_names};
+pub use runs::{
+    get_run, get_run_detail, list_runs_datatable_page, list_runs_page, list_task_names,
+};
 pub use tasks::{
-    get_task, get_task_config, get_tasks, get_tasks_datatable_page, get_tasks_page,
-    update_task_config,
+    get_task, get_task_active_jobs, get_task_config, get_task_detail, get_tasks,
+    get_tasks_datatable_page, get_tasks_page, update_task_config,
 };
