@@ -1,11 +1,13 @@
 use leptos::prelude::*;
+use leptos_router::hooks::use_navigate;
+use leptos_router::NavigateOptions;
 use orbital::components::{
     Button, Caption1, Card, Flex, FlexGap, FlexWrap, MessageBar, MessageBarIntent, Skeleton,
     SkeletonItem, SpacingSize,
 };
-use orbital::primitives::{ButtonAppearance, Link};
+use orbital::primitives::{ButtonAppearance, FlexJustify, Link};
 
-use super::charts::{line_chart_from_series, run_outcome_series_is_empty};
+use super::charts::{bar_chart_from_series, bucket_starts, run_outcome_series_is_empty};
 use crate::components::{run_outcomes_chart_help, BosonCardContent, BosonHelpCardHeader};
 use crate::server::get_run_stats_series;
 
@@ -23,6 +25,28 @@ fn RunTrendChartSkeleton(
             <SkeletonItem class=class />
         </Skeleton>
     }
+}
+
+/// Stacked outcome bars; picking a bar opens Runs for that bucket's `from` and `to`.
+#[component]
+fn RunTrendChart(
+    /// Loaded series.
+    series: Vec<crate::server::DashboardChartSeries>,
+    /// Range the series cover, in seconds.
+    range: i64,
+) -> impl IntoView {
+    let starts = bucket_starts(&series);
+    let step = boson_backend::run_bucket_step(boson_backend::run_bucket_granularity(range));
+    let navigate = use_navigate();
+    let on_bucket = Callback::new(move |(i,): (usize,)| {
+        if let Some(from) = starts.get(i) {
+            navigate(
+                &boson_backend::boson_runs_window_path(*from, *from + step),
+                NavigateOptions::default(),
+            );
+        }
+    });
+    bar_chart_from_series(&series, 280.0, range > RANGE_24H, on_bucket)
 }
 
 #[component]
@@ -94,15 +118,12 @@ pub fn BosonRunTrendCard() -> impl IntoView {
                                             "No runs in this time range."
                                         </MessageBar>
                                     }.into_any(),
-                                    Ok(series) => {
-                                        let use_daily = range_secs.get_untracked() > RANGE_24H;
-                                        view! {
-                                            {line_chart_from_series(&series, 280.0, use_daily)}
-                                        }.into_any()
-                                    }
+                                    Ok(series) => view! {
+                                        <RunTrendChart series=series range=range_secs.get_untracked() />
+                                    }.into_any(),
                                     Err(e) => view! {
                                         <MessageBar intent=MessageBarIntent::Error>
-                                            "Failed to load chart: " {e.to_string()}
+                                            "Couldn't load the chart. " {e.to_string()}
                                         </MessageBar>
                                     }.into_any(),
                                 })}
@@ -110,11 +131,14 @@ pub fn BosonRunTrendCard() -> impl IntoView {
                         </Show>
                     </div>
 
-                    <div data-testid="dashboard-run-trend-view-all">
-                        <Link href=crate::paths::RUNS>
-                            <Caption1>"View all runs →"</Caption1>
-                        </Link>
-                    </div>
+                    <Flex justify=FlexJustify::SpaceBetween wrap=FlexWrap::Wrap gap=FlexGap::Small>
+                        <Caption1>"Pick a bar to see its runs."</Caption1>
+                        <div data-testid="dashboard-run-trend-view-all">
+                            <Link href=crate::paths::RUNS>
+                                <Caption1>"All runs"</Caption1>
+                            </Link>
+                        </div>
+                    </Flex>
                 </Flex>
             </BosonCardContent>
         </Card>

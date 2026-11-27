@@ -366,11 +366,12 @@ fn apply_task_config_update_merges_fields_happy_path() {
 
 #[test]
 fn dashboard_stats_shape_happy_path() {
-    let stats = dashboard_stats(3, 4, 1, 9);
-    assert_eq!(stats.task_count, 3);
-    assert_eq!(stats.jobs_queued, 4);
+    let oldest = Utc::now();
+    let stats = dashboard_stats(4, 1, 9, Some(oldest));
+    assert_eq!(stats.jobs_waiting, 4);
     assert_eq!(stats.jobs_running, 1);
-    assert_eq!(stats.runs_today, 9);
+    assert_eq!(stats.failed_24h, 9);
+    assert_eq!(stats.oldest_waiting_at, Some(oldest));
 }
 
 #[test]
@@ -391,14 +392,15 @@ fn align_run_bucket_four_hourly_floors_happy_path() {
 }
 
 #[test]
-fn run_stats_series_omits_failed_when_all_success_happy_path() {
+fn run_stats_series_keeps_every_group_when_all_success_happy_path() {
     let now = Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0).unwrap();
     let mut run = sample_run_core("r1", "j1", "alpha", RunStatus::Success);
     run.started_at = now - chrono::Duration::hours(1);
     let series = run_stats_series_from_runs(&[run], now, 86_400);
-    assert_eq!(series.len(), 1);
-    assert_eq!(series[0].id, "successful");
+    assert_eq!(series.len(), 3);
+    assert_eq!(series[0].id, "succeeded");
     assert!(series[0].points.iter().any(|p| p.value > 0.0));
+    assert!(series[1].points.iter().all(|p| p.value == 0.0));
 }
 
 fn rules_request(items: Vec<(&str, &str)>, quick_search: Option<&str>) -> PageRequest {

@@ -18,6 +18,20 @@ pub(super) fn boson_backend(
         .ok_or_else(|| ServerFnError::new("Boson backend not in request context"))
 }
 
+/// Queue backend behind an embedded coordinator, for pool stats, pause and purge.
+///
+/// The coordinator trait has no pool methods yet, so this reaches the queue backend through
+/// the embedded Boson runtime. A remote coordinator has none and gets a typed error.
+#[cfg(feature = "ssr")]
+pub(super) fn queue_backend(
+    backend: &dyn boson_coordinator::BosonCoordinatorBackend,
+) -> Result<std::sync::Arc<dyn boson_core::QueueBackend>, ServerFnError> {
+    backend
+        .as_boson_runtime()
+        .map(|boson| boson.queue_backend())
+        .ok_or_else(|| ServerFnError::new("Queues need an embedded Boson runtime on this host"))
+}
+
 /// Pools the host offers: the context [`boson_backend::BosonPoolProvider`], or
 /// [`boson_backend::default_gluon_pool_rows`] when the host supplies none.
 #[cfg(feature = "ssr")]

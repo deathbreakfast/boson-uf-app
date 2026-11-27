@@ -5,6 +5,7 @@
 
 pub mod dashboard;
 pub mod jobs;
+pub mod queues;
 pub mod run_detail;
 pub mod runs;
 pub mod task_config;
@@ -13,6 +14,7 @@ pub mod tasks;
 
 pub use dashboard::BosonRootPage;
 pub use jobs::{BosonJobsPage, BosonQueueRedirect};
+pub use queues::{BosonQueueDetailPage, BosonQueuesPage};
 pub use run_detail::BosonRunDetailPage;
 pub use runs::BosonRunsIndexPage;
 pub use task_config::BosonTaskConfigPage;

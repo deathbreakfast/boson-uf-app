@@ -27,6 +27,12 @@ pub enum BosonIdError {
     UnsafeJobId,
     /// Run id contained `/`, `\`, controls, or was `.` / `..`.
     UnsafeRunId,
+    /// Queue (pool) name was empty or whitespace-only.
+    EmptyPoolName,
+    /// Queue (pool) name exceeded [`MAX_POOL_NAME_CHARS`].
+    PoolNameTooLong,
+    /// Queue (pool) name contained `/`, `\`, controls, or was `.` / `..`.
+    UnsafePoolName,
 }
 
 impl std::fmt::Display for BosonIdError {
@@ -46,6 +52,11 @@ impl std::fmt::Display for BosonIdError {
             }
             Self::UnsafeRunId => {
                 write!(f, "Boson run id contains unsafe path characters")
+            }
+            Self::EmptyPoolName => write!(f, "Boson queue name is required"),
+            Self::PoolNameTooLong => write!(f, "Boson queue name is too long"),
+            Self::UnsafePoolName => {
+                write!(f, "Boson queue name contains unsafe path characters")
             }
         }
     }
@@ -101,6 +112,22 @@ pub fn validate_task_name(task_name: &str) -> Result<(), BosonIdError> {
         Err(BosonIdErrorKind::Empty) => Err(BosonIdError::EmptyTaskName),
         Err(BosonIdErrorKind::TooLong) => Err(BosonIdError::TaskNameTooLong),
         Err(BosonIdErrorKind::Unsafe) => Err(BosonIdError::UnsafeTaskName),
+    }
+}
+
+/// Rejects blank, oversized (over [`MAX_POOL_NAME_CHARS`]), path-separating, control, or
+/// `.` / `..` queue names before pool stats, pause or purge.
+///
+/// # Errors
+///
+/// Returns a [`BosonIdError`] pool variant when the name fails those rules.
+pub fn validate_pool_name(pool: &str) -> Result<(), BosonIdError> {
+    match check_ops_id(pool) {
+        Ok(p) if p.chars().count() > MAX_POOL_NAME_CHARS => Err(BosonIdError::PoolNameTooLong),
+        Ok(_) => Ok(()),
+        Err(BosonIdErrorKind::Empty) => Err(BosonIdError::EmptyPoolName),
+        Err(BosonIdErrorKind::TooLong) => Err(BosonIdError::PoolNameTooLong),
+        Err(BosonIdErrorKind::Unsafe) => Err(BosonIdError::UnsafePoolName),
     }
 }
 

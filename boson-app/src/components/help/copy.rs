@@ -23,23 +23,23 @@ pub fn effective_help() -> AnyView {
     )
 }
 
-pub fn runs_24h_help() -> AnyView {
-    caption(
-        "Count of runs whose started_at timestamp falls within the last 24 hours, using the server UTC clock.",
-    )
+pub fn failed_24h_help() -> AnyView {
+    caption("Runs that failed in the last 24 hours, across every task type.")
 }
 
 pub fn run_outcomes_chart_help() -> AnyView {
     caption(
-        "Successful and failed runs bucketed in UTC (hourly for 24h, daily for 7d). \
-         Failed includes failed, timeout, and canceled runs. \
-         Data is sampled from the most recent run history (bounded fetch). \
-         The Runs (24h) stat is a rolling total; this chart shows per-bucket counts for the selected range.",
+        "Runs by outcome in each time bucket: four hours wide for 24h, a day wide for 7d. \
+         Succeeded, Failed, and Timed out or canceled stack in each bar. \
+         Pick a bar to open the runs that started in it.",
     )
 }
 
-pub fn tasks_overview_help() -> AnyView {
-    caption("Top five tasks from the task index ordering.")
+pub fn failing_most_help() -> AnyView {
+    caption(
+        "Task types with the most failed runs in the last 24 hours. \
+         Success rate counts that day's runs, with one decimal.",
+    )
 }
 
 pub fn pool_help() -> AnyView {

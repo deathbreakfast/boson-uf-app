@@ -574,19 +574,19 @@ pub const fn at_in_flight_limit(active: u32, max_in_flight: u32) -> bool {
     max_in_flight > 0 && active >= max_in_flight
 }
 
-/// Builds dashboard KPI counters after coordinator queries resolve.
+/// Builds dashboard KPIs from backend counts.
 #[must_use]
 pub const fn dashboard_stats(
-    task_count: u32,
-    jobs_queued: u32,
+    jobs_waiting: u32,
     jobs_running: u32,
-    runs_today: u32,
+    failed_24h: u32,
+    oldest_waiting_at: Option<DateTime<Utc>>,
 ) -> DashboardStats {
     DashboardStats {
-        task_count,
-        jobs_queued,
+        jobs_waiting,
         jobs_running,
-        runs_today,
+        failed_24h,
+        oldest_waiting_at,
     }
 }
 

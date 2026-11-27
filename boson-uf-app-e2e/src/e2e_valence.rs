@@ -628,6 +628,70 @@ pub fn e2e_people_lookup() -> Arc<dyn boson_app::BosonPeopleLookup> {
     Arc::new(E2ePeople)
 }
 
+/// Jobs and runs the dashboard and Queues specs seed into one pool.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct OpsSeed {
+    /// Pool the jobs go to; specs pass a unique name so parallel tests don't collide.
+    pub pool: String,
+    /// Queued jobs to add.
+    #[serde(default)]
+    pub queued: usize,
+    /// Running jobs to add.
+    #[serde(default)]
+    pub running: usize,
+    /// Failed jobs (waiting for Retry or Drop) to add.
+    #[serde(default)]
+    pub failed_jobs: usize,
+    /// Failed runs started now, with one error message, to add.
+    #[serde(default)]
+    pub failed_runs: usize,
+}
+
+/// Error message on runs [`seed_ops`] marks failed.
+pub const E2E_OPS_ERROR: &str = "Ledger API refused the token (401)";
+
+/// Upsert the jobs and runs an [`OpsSeed`] asks for, all for [`E2E_TASK_NAME`]. The e2e host
+/// runs no worker, so queued jobs stay queued.
+pub async fn seed_ops(seed: &OpsSeed) -> anyhow::Result<()> {
+    let queue = e2e_queue();
+    let statuses = std::iter::repeat_n(JobStatus::Queued, seed.queued)
+        .chain(std::iter::repeat_n(JobStatus::Running, seed.running))
+        .chain(std::iter::repeat_n(JobStatus::Failed, seed.failed_jobs));
+    for status in statuses {
+        let mut job = Job::new(
+            E2E_TASK_NAME,
+            serde_json::json!({"System": {"operation": "e2e_ops"}}),
+            serde_json::json!({}),
+            0,
+            &seed.pool,
+            0,
+            None,
+        );
+        job.status = status;
+        queue.upsert_job(&job).await?;
+    }
+    for _ in 0..seed.failed_runs {
+        let mut job = Job::new(
+            E2E_TASK_NAME,
+            serde_json::json!({"System": {"operation": "e2e_ops"}}),
+            serde_json::json!({}),
+            0,
+            &seed.pool,
+            0,
+            None,
+        );
+        job.status = JobStatus::Canceled;
+        queue.upsert_job(&job).await?;
+        let mut run = Run::new(&job.job_id, E2E_TASK_NAME, 1);
+        run.status = RunStatus::Failed;
+        run.finished_at = Some(Utc::now());
+        run.duration_ms = Some(5);
+        run.error_message = Some(E2E_OPS_ERROR.to_string());
+        queue.upsert_run(&run).await?;
+    }
+    Ok(())
+}
+
 pub fn e2e_system_valence() -> Valence {
     Valence::builder()
         .database_router(e2e_router())

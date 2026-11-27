@@ -6,8 +6,9 @@
 //! components without `Lazy`.
 
 use boson_app::{
-    BosonJobsPage, BosonLayout, BosonQueueRedirect, BosonRootPage, BosonRunDetailPage,
-    BosonRunsIndexPage, BosonTaskConfigRedirect, BosonTaskDetailPage, BosonTasksIndexPage,
+    BosonJobsPage, BosonLayout, BosonQueueDetailPage, BosonQueueRedirect, BosonQueuesPage,
+    BosonRootPage, BosonRunDetailPage, BosonRunsIndexPage, BosonTaskConfigRedirect,
+    BosonTaskDetailPage, BosonTasksIndexPage,
 };
 use leptos::prelude::*;
 use leptos_router::{
@@ -26,6 +27,8 @@ pub fn BosonRoutesEager() -> impl leptos_router::MatchNestedRoutes + Clone {
             <Route path=path!("tasks/:task_name/config") view=BosonTaskConfigRedirect />
             <Route path=path!("jobs") view=BosonJobsPage />
             <Route path=path!("queue") view=BosonQueueRedirect />
+            <Route path=path!("queues") view=BosonQueuesPage />
+            <Route path=path!("queues/:name") view=BosonQueueDetailPage />
             <Route path=path!("runs") view=BosonRunsIndexPage />
             <Route path=path!("runs/:id") view=BosonRunDetailPage />
         </ParentRoute>

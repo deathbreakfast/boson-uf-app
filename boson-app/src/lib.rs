@@ -13,17 +13,20 @@
 //! ## Features
 //!
 //! - **Boson admin routes** — Provides the nested `/boson` route tree behind auth for
-//!   dashboard, tasks, jobs, and runs. Mount once when the host router starts.
+//!   dashboard, tasks, jobs, queues, and runs. Mount once when the host router starts.
 //!   [Get started](#mount-boson-routes)
-//! - **Dashboard KPIs** — Shows task, queue, and run counters on [`BosonRootPage`] via
-//!   [`get_dashboard_stats`] plus run-trend charts from [`get_run_stats_series`].
-//!   [Get started](#dashboard-kpis)
+//! - **Dashboard** — Shows what's stuck and what's failing on [`BosonRootPage`] via
+//!   [`get_dashboard_stats`], [`get_needs_attention`], [`get_failing_most`] and the
+//!   run-outcome chart from [`get_run_stats_series`]. [Get started](#dashboard)
 //! - **Tasks browser** — Lists registered tasks and supports detail and config edits via
 //!   [`get_tasks`], [`get_task`], and [`update_task_config`].
 //!   [Get started](#browse-tasks)
 //! - **Jobs** — Lists waiting and running jobs and lets operators cancel them, and lists
 //!   failed jobs to retry or drop, via [`list_jobs_datatable_page`], [`cancel_job`],
 //!   [`retry_jobs`] and [`drop_jobs`]. [Get started](#inspect-jobs)
+//! - **Queues** — Shows whether each Gluon pool keeps up and lets admins pause, resume or
+//!   purge it via [`list_queues`], [`get_queue`], [`pause_queue`], [`resume_queue`] and
+//!   [`purge_queue`]. [Get started](#queues)
 //! - **Runs browser** — Lists run attempts by status, task and time, searches by id, and
 //!   opens detail pages via [`list_runs_datatable_page`] and [`get_run`].
 //!   [Get started](#browse-runs)
@@ -56,38 +59,55 @@
 //! and nested jobs and run routes load their pages. Unauthenticated sessions are rejected
 //! by server functions — see root `SECURITY.md`.
 //!
-//! ## Dashboard KPIs
+//! ## Dashboard
 //!
-//! The dashboard answers how much background work is active right now: registered task
-//! count, queued and running jobs, and runs started in the last 24 hours.
-//! [`BosonRootPage`] calls [`get_dashboard_stats`] on each SSR render and
-//! [`get_run_stats_series`] for trend charts — use this landing page after mounting routes
-//! when operators need a quick health snapshot.
+//! The dashboard answers one question first: is anything stuck? Four cards show jobs
+//! waiting, jobs running, runs failed in the last 24 hours and the oldest waiting job.
+//! Needs attention lists queues falling behind, failed jobs per task type and task types
+//! failing more than usual, worst first, each with a link to the list behind it. Failing
+//! most ranks task types by failed runs in the last 24 hours.
 //!
 //! **Prerequisites:** [`BosonRoutes`] mounted; `ssr` feature; `BosonAdmin` permission;
-//! Boson backend request context wired.
+//! Boson backend request context wired. Queue lines and the oldest-waiting card need an embedded
+//! Boson runtime (see [Queues](#queues)); with a remote coordinator they stay empty.
 //!
 //! ```rust,ignore
-//! use boson_app::{
-//!     BosonRootPage, get_dashboard_stats, get_run_stats_series, DashboardStats,
-//! };
-//! use leptos::prelude::*;
+//! use boson_app::{get_dashboard_stats, get_needs_attention, get_run_stats_series};
 //!
-//! // BosonRootPage calls these on each SSR render:
-//! view! { <BosonRootPage /> };
-//! let stats: DashboardStats = get_dashboard_stats().await?;
-//! assert_eq!(stats.task_count, 3);
-//! assert_eq!(stats.jobs_queued, 5);
+//! let stats = get_dashboard_stats().await?;
+//! println!("{} waiting, {} failed today", stats.jobs_waiting, stats.failed_24h);
+//!
+//! for line in get_needs_attention().await? {
+//!     println!("{}: {} ({})", line.kind.label(), line.title, line.href);
+//! }
 //!
 //! let series = get_run_stats_series(86_400).await?;
-//! assert!(!series.is_empty());
+//! assert_eq!(series.len(), 3); // succeeded, failed, timed out or canceled
 //! ```
 //!
-//! On success `stats` carries `task_count`, `jobs_queued`, `jobs_running`, and `runs_today`;
-//! `series` holds chart buckets for successful and failed runs. `range_secs` must be
-//! `86_400` (24h) or `604_800` (7d); other values return `Invalid range_secs:…`.
-//! Blank or unsafe path ids are rejected by `boson_backend::validate_*` before
-//! coordinator IO.
+//! An empty Needs attention list means All clear. `range_secs` must be `86_400` (24h) or
+//! `604_800` (7d); other values return `Invalid range_secs:…`.
+//!
+//! ## Queues
+//!
+//! Each queue is a Gluon pool. [`list_queues`] returns one [`QueueSummary`] per pool with
+//! what's waiting and running and the jobs added and finished in the last hour; a queue is
+//! falling behind when more jobs arrived than finished and some are waiting.
+//! [`pause_queue`] stops new claims (waiting jobs stay, running jobs finish, new jobs still
+//! join), [`resume_queue`] restarts them, and [`purge_queue`] removes waiting jobs only.
+//!
+//! **Prerequisites:** `BosonAdmin`; a coordinator with an embedded Boson runtime. A remote
+//! coordinator returns `Queues need an embedded Boson runtime on this host`.
+//!
+//! ```rust,ignore
+//! use boson_app::{list_queues, pause_queue, purge_queue};
+//!
+//! for q in list_queues().await? {
+//!     println!("{} is {}", q.name, q.state.label());
+//! }
+//! pause_queue("render-pool".into()).await?;
+//! let removed = purge_queue("render-pool".into()).await?;
+//! ```
 //!
 //! ## Browse tasks
 //!
@@ -196,12 +216,14 @@
 //!
 //! | Path | Page | Key server fn(s) |
 //! |---|---|---|
-//! | `/boson` | [`BosonRootPage`] | [`get_dashboard_stats`], [`get_run_stats_series`] |
+//! | `/boson` | [`BosonRootPage`] | [`get_dashboard_stats`], [`get_needs_attention`], [`get_failing_most`], [`get_run_stats_series`] |
 //! | `/boson/tasks` | [`BosonTasksIndexPage`] | [`get_tasks_page`], [`get_tasks_datatable_page`] |
 //! | `/boson/tasks/:task_name` (`?tab=settings` is email-verified) | [`BosonTaskDetailPage`], [`BosonTaskConfigPage`] | [`get_task_detail`], [`get_task_config`], [`update_task_config`], [`get_task_active_jobs`], [`list_gluon_pools_for_boson_task_config`] |
 //! | `/boson/tasks/:task_name/config` | [`BosonTaskConfigRedirect`] | redirects to `?tab=settings` |
 //! | `/boson/jobs` (`?tab=active`, `failed`, `finished`) | [`BosonJobsPage`] | [`list_jobs_datatable_page`], [`cancel_job`], [`retry_jobs`], [`drop_jobs`] |
 //! | `/boson/queue` | [`BosonQueueRedirect`] | redirects to `/boson/jobs` |
+//! | `/boson/queues` | [`BosonQueuesPage`] | [`list_queues`] |
+//! | `/boson/queues/:name` | [`BosonQueueDetailPage`] | [`get_queue`], [`pause_queue`], [`resume_queue`], [`purge_queue`] |
 //! | `/boson/runs` | [`BosonRunsIndexPage`] | [`list_runs_datatable_page`], [`list_task_names`] |
 //! | `/boson/runs/:id` | [`BosonRunDetailPage`] | [`get_run_detail`], [`retry_jobs`], [`drop_jobs`], [`cancel_job`] |
 //!
@@ -215,7 +237,7 @@
 //!
 //! - [`BosonLayout`] — shared app bar / nav shell wrapping every route.
 //! - [`mod@server`] — server functions and DTOs backing the UI.
-//! - [`mod@pages`] — route page components (dashboard, tasks, jobs, runs).
+//! - [`mod@pages`] — route page components (dashboard, tasks, jobs, queues, runs).
 //! - `components` — shared Orbital-composed UI pieces (tables, badges, help).
 //! - [`permissions::BosonPermission`] — permission manifest for `BosonAdmin`.
 //! - [`live`] / [`photon_ws`] — client poll-tick and SSR route merge for live updates.
@@ -250,21 +272,25 @@ pub mod server;
 
 pub use layout::BosonLayout;
 pub use lazy_routes::{
-    prefetch_family, BosonJobsRoute, BosonLayoutRouteView, BosonRootRoute, BosonRunDetailRoute,
-    BosonRunsIndexRoute, BosonTaskDetailRoute, BosonTasksIndexRoute, BosonVerifiedTaskConfigRoute,
+    prefetch_family, BosonJobsRoute, BosonLayoutRouteView, BosonQueueDetailRoute, BosonQueuesRoute,
+    BosonRootRoute, BosonRunDetailRoute, BosonRunsIndexRoute, BosonTaskDetailRoute,
+    BosonTasksIndexRoute, BosonVerifiedTaskConfigRoute,
 };
 pub use pages::{
-    BosonJobsPage, BosonQueueRedirect, BosonRootPage, BosonRunDetailPage, BosonRunsIndexPage,
-    BosonTaskConfigPage, BosonTaskConfigRedirect, BosonTaskDetailPage, BosonTasksIndexPage,
+    BosonJobsPage, BosonQueueDetailPage, BosonQueueRedirect, BosonQueuesPage, BosonRootPage,
+    BosonRunDetailPage, BosonRunsIndexPage, BosonTaskConfigPage, BosonTaskConfigRedirect,
+    BosonTaskDetailPage, BosonTasksIndexPage,
 };
 pub use server::{
-    cancel_job, drop_jobs, get_dashboard_stats, get_run, get_run_detail, get_run_stats_series,
-    get_task, get_task_active_jobs, get_task_config, get_task_detail, get_tasks,
-    get_tasks_datatable_page, get_tasks_page, list_gluon_pools_for_boson_task_config,
-    list_jobs_datatable_page, list_jobs_page, list_runs_datatable_page, list_runs_page,
-    list_task_names, retry_jobs, update_task_config, BosonPeopleLookup, BosonPoolProvider,
-    DashboardStats, GluonPoolPickRow, JobActionOutcome, JobSummary, RunDetail, RunSummary,
-    TaskConfigDto, TaskDetail, TaskSummary, BOSON_ADMIN_PERMISSION,
+    cancel_job, drop_jobs, get_dashboard_stats, get_failing_most, get_needs_attention, get_queue,
+    get_run, get_run_detail, get_run_stats_series, get_task, get_task_active_jobs, get_task_config,
+    get_task_detail, get_tasks, get_tasks_datatable_page, get_tasks_page,
+    list_gluon_pools_for_boson_task_config, list_jobs_datatable_page, list_jobs_page, list_queues,
+    list_runs_datatable_page, list_runs_page, list_task_names, pause_queue, purge_queue,
+    resume_queue, retry_jobs, update_task_config, BosonPeopleLookup, BosonPoolProvider,
+    DashboardStats, FailingTaskRow, GluonPoolPickRow, JobActionOutcome, JobSummary,
+    NeedsAttentionLine, QueueDetail, QueueSummary, RunDetail, RunSummary, TaskConfigDto,
+    TaskDetail, TaskSummary, BOSON_ADMIN_PERMISSION,
 };
 
 uf_app! {
@@ -298,6 +324,8 @@ pub fn BosonRoutes() -> impl leptos_router::MatchNestedRoutes + Clone {
             <Route path=path!("tasks/:task_name/config") view={Lazy::<BosonVerifiedTaskConfigRoute>::new()} />
             <Route path=path!("jobs") view={Lazy::<BosonJobsRoute>::new()} />
             <Route path=path!("queue") view=BosonQueueRedirect />
+            <Route path=path!("queues") view={Lazy::<BosonQueuesRoute>::new()} />
+            <Route path=path!("queues/:name") view={Lazy::<BosonQueueDetailRoute>::new()} />
             <Route path=path!("runs") view={Lazy::<BosonRunsIndexRoute>::new()} />
             <Route path=path!("runs/:id") view={Lazy::<BosonRunDetailRoute>::new()} />
         </ParentRoute>

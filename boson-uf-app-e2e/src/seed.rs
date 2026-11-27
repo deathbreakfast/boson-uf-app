@@ -6,8 +6,8 @@ use serde::Deserialize;
 
 use crate::e2e_valence::{
     e2e_fixtures, refresh_queue_job, seed_failed_job, seed_failed_jobs, seed_filter_runs,
-    seed_limited_task, seed_paging_jobs, store_fixtures, E2E_LIMITED_ACTIVE, E2E_LIMITED_TASK_NAME,
-    E2E_SETTINGS_TASK_NAME,
+    seed_limited_task, seed_ops, seed_paging_jobs, store_fixtures, OpsSeed, E2E_LIMITED_ACTIVE,
+    E2E_LIMITED_TASK_NAME, E2E_SETTINGS_TASK_NAME,
 };
 use crate::gate_demos::{write_e2e_auth_kind, E2eAuthKind};
 
@@ -34,6 +34,9 @@ pub struct SeedRequest {
     /// When true, fill the limited task type to its "most at once" limit.
     #[serde(default)]
     pub at_limit: bool,
+    /// When set, upsert jobs and runs into one pool for the dashboard and Queues specs.
+    #[serde(default)]
+    pub ops: Option<OpsSeed>,
 }
 
 fn default_auth() -> String {
@@ -108,6 +111,15 @@ pub async fn seed_data(
     } else {
         None
     };
+    if let Some(ops) = &body.ops {
+        if ops.pool.trim().is_empty() {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        seed_ops(ops).await.map_err(|e| {
+            log::error!("seed ops failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    }
 
     Ok(Json(serde_json::json!({
         "ok": true,

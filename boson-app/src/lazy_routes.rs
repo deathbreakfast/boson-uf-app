@@ -8,8 +8,9 @@ use leptos::prelude::*;
 use leptos_router::{lazy_route, LazyRoute};
 
 use crate::{
-    BosonJobsPage, BosonLayout, BosonRootPage, BosonRunDetailPage, BosonRunsIndexPage,
-    BosonTaskConfigRedirect, BosonTaskDetailPage, BosonTasksIndexPage,
+    BosonJobsPage, BosonLayout, BosonQueueDetailPage, BosonQueuesPage, BosonRootPage,
+    BosonRunDetailPage, BosonRunsIndexPage, BosonTaskConfigRedirect, BosonTaskDetailPage,
+    BosonTasksIndexPage,
 };
 
 /// Prefetch the boson family WASM chunk (leaf pages share split modules).
@@ -95,6 +96,36 @@ impl LazyRoute for BosonJobsRoute {
 
     fn view(_this: Self) -> AnyView {
         view! { <BosonJobsPage /> }.into_any()
+    }
+}
+
+/// Lazy `/boson/queues`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BosonQueuesRoute;
+
+#[lazy_route]
+impl LazyRoute for BosonQueuesRoute {
+    fn data() -> Self {
+        Self
+    }
+
+    fn view(_this: Self) -> AnyView {
+        view! { <BosonQueuesPage /> }.into_any()
+    }
+}
+
+/// Lazy `/boson/queues/:name`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BosonQueueDetailRoute;
+
+#[lazy_route]
+impl LazyRoute for BosonQueueDetailRoute {
+    fn data() -> Self {
+        Self
+    }
+
+    fn view(_this: Self) -> AnyView {
+        view! { <BosonQueueDetailPage /> }.into_any()
     }
 }
 

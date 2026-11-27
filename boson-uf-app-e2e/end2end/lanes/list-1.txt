@@ -1,7 +1,10 @@
 auth_gate.spec.ts › pw-boson-auth-gate › pw-boson-auth-gate-sad-anonymous
 auth_gate.spec.ts › pw-boson-auth-gate › pw-boson-auth-gate-happy-admin
-dashboard.spec.ts › pw-boson-dashboard › pw-boson-dashboard-happy-kpis
-dashboard.spec.ts › pw-boson-dashboard › pw-boson-dashboard-sad-empty-recent-not-crash
+dashboard.spec.ts › pw-boson-dashboard › pw-boson-dashboard-happy-four-stats
+dashboard.spec.ts › pw-boson-dashboard › pw-boson-dashboard-happy-needs-attention-links
+dashboard.spec.ts › pw-boson-dashboard › pw-boson-dashboard-happy-failing-most-one-decimal
+dashboard.spec.ts › pw-boson-dashboard › pw-boson-dashboard-happy-chart-bucket-opens-runs
+dashboard.spec.ts › pw-boson-dashboard › pw-boson-dashboard-sad-keeping-up-queue-has-no-line
 failed_jobs.spec.ts › pw-boson-failed-jobs › pw-boson-failed-jobs-happy-retry-two
 failed_jobs.spec.ts › pw-boson-failed-jobs › pw-boson-failed-jobs-happy-drop-keeps-runs
 jobs.spec.ts › pw-boson-jobs › pw-boson-jobs-happy-queue-redirects-to-active
@@ -14,6 +17,11 @@ queue_paging.spec.ts › pw-boson-queue-paging › pw-boson-queue-paging-happy-u
 run_detail.spec.ts › pw-boson-run-detail › pw-boson-run-detail-happy-failed-run
 run_detail.spec.ts › pw-boson-run-detail › pw-boson-run-detail-happy-retry-job
 run_detail.spec.ts › pw-boson-run-detail › pw-boson-run-detail-sad-success-run-has-no-retry
+queues.spec.ts › pw-boson-queues › pw-boson-queues-happy-list-shows-state
+queues.spec.ts › pw-boson-queues › pw-boson-queues-happy-pause-keeps-new-job-waiting-then-resume
+queues.spec.ts › pw-boson-queues › pw-boson-queues-happy-purge-removes-only-waiting
+queues.spec.ts › pw-boson-queues › pw-boson-queues-sad-outsider-denied
+queues.spec.ts › pw-boson-queues › pw-boson-queues-sad-unknown-queue
 runs.spec.ts › pw-boson-runs › pw-boson-runs-happy-list-detail
 runs.spec.ts › pw-boson-runs › pw-boson-runs-happy-filters-in-url
 runs.spec.ts › pw-boson-runs › pw-boson-runs-happy-search-last-characters-and-time

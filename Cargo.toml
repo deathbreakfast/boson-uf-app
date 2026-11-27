@@ -175,7 +175,7 @@ orbital-history = { git = "https://github.com/unified-field-dev/orbital", branch
 orbital-markdown = { git = "https://github.com/unified-field-dev/orbital", branch = "main" }
 orbital-style = { git = "https://github.com/unified-field-dev/orbital", branch = "main" }
 
-# Temporary: filtered keyset paging, counts, retry and drop are on the fork's boson and
+# Temporary: filtered keyset paging, counts, retry, drop, pool stats, pause and purge are on the fork's boson and
 # boson-coordinator main ahead of uf-dev. Drop once both reach uf-dev main.
 [patch."https://github.com/unified-field-dev/boson"]
 boson-core = { git = "https://github.com/deathbreakfast/boson", branch = "main" }
