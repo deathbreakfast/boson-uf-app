@@ -6,6 +6,13 @@ export type SeedFixtures = {
   task_name: string;
   job_id: string;
   run_id: string;
+  /** Last run of the seeded failed job (set when `failedJob` is requested). */
+  failed_run_id: string | null;
+  /** Task type the Settings save spec edits. */
+  settings_task: string;
+  /** Task type the Limits spec fills to its limit. */
+  limited_task: string;
+  limited_active: number;
 };
 
 /** Two failed jobs (all three attempts used), with their failed runs. */
@@ -29,6 +36,8 @@ export async function seedAuth(
     pagingJobs?: boolean;
     failedJobs?: boolean;
     filterRuns?: boolean;
+    failedJob?: boolean;
+    atLimit?: boolean;
   },
 ) {
   const res = await page.request.post("/api/test/seed-data", {
@@ -38,6 +47,8 @@ export async function seedAuth(
       paging_jobs: opts?.pagingJobs ?? false,
       failed_jobs: opts?.failedJobs ?? false,
       filter_runs: opts?.filterRuns ?? false,
+      failed_job: opts?.failedJob ?? false,
+      at_limit: opts?.atLimit ?? false,
     },
   });
   expect(res.ok()).toBeTruthy();

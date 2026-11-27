@@ -233,11 +233,34 @@ fn server_drop_require_session_on_get_tasks_sad_path() {
 }
 
 #[test]
+fn task_detail_hides_run_errors_happy_path() {
+    let tasks = read_app("server/tasks.rs");
+    let start = tasks
+        .find("pub async fn get_task_detail")
+        .expect("get_task_detail");
+    let end = tasks[start..]
+        .find("pub async fn get_task_active_jobs")
+        .map_or(tasks.len(), |i| start + i);
+    let body = &tasks[start..end];
+    assert!(
+        body.contains("error_message = None"),
+        "get_task_detail is open to every signed-in user, so recent runs must not carry handler error text"
+    );
+}
+
+#[test]
 fn task_config_email_gate_happy_path() {
+    let task_detail = read_app("pages/task_detail/mod.rs");
+    assert!(
+        task_detail.contains("requires_email_verification=true")
+            && task_detail.contains("BosonTaskConfigPage"),
+        "the Settings tab must require email verification"
+    );
     let lazy = read_app("lazy_routes.rs");
     assert!(
-        lazy.contains("requires_email_verification=true") && lazy.contains("BosonTaskConfigPage"),
-        "task config lazy route must require email verification"
+        lazy.contains("BosonTaskConfigRedirect")
+            && task_detail.contains("boson_task_settings_path"),
+        "/config must redirect to the Settings tab"
     );
 
     let tasks = read_app("server/tasks.rs");
@@ -253,10 +276,10 @@ fn task_config_email_gate_happy_path() {
 
 #[test]
 fn task_config_drop_email_gate_sad_path() {
-    let lazy = read_app("lazy_routes.rs");
+    let task_detail = read_app("pages/task_detail/mod.rs");
     assert!(
-        lazy.contains("requires_email_verification=true"),
-        "dropping email verification on BosonVerifiedTaskConfigRoute opens config to unverified sessions"
+        task_detail.contains("requires_email_verification=true"),
+        "dropping email verification on the Settings tab opens config to unverified sessions"
     );
     let tasks = read_app("server/tasks.rs");
     let start = tasks
@@ -438,7 +461,7 @@ fn lazy_routes_wire_pages_happy_path() {
         "BosonRootPage",
         "BosonTasksIndexPage",
         "BosonTaskDetailPage",
-        "BosonTaskConfigPage",
+        "BosonTaskConfigRedirect",
         "BosonJobsPage",
         "BosonRunsIndexPage",
         "BosonRunDetailPage",

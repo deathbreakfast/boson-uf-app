@@ -1,13 +1,18 @@
 //! DTO mappers and pure aggregates backing Boson job/run/task server fns.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
-use boson_core::{Job, JobStatus, RetryPolicy, Run, RunStatus, TaskConfig};
+use boson_core::{
+    IdempotencyMode, Job, JobStatus, RateLimitPolicy, RetryPolicy, Run, RunStatus, TaskConfig,
+};
 use chrono::{DateTime, Utc};
+use serde_json::Value;
 
 use crate::types::{
-    DashboardStats, JobStatusDto, JobSummary, RetryPolicyDto, RunStatusDto, RunSummary,
-    TaskConfigDto, TaskSummary, UpdateTaskConfigRequest,
+    DashboardStats, IdempotencyModeDto, JobStatusDto, JobSummary, RateLimitPolicyDto,
+    RetryPolicyDto, RunJobInfo, RunStatusDto, RunSummary, TaskArgumentRow, TaskConfigDto,
+    TaskSummary, UpdateTaskConfigRequest,
 };
 
 /// Per-task aggregates built from full job/run lists (`get_tasks`).
@@ -64,6 +69,44 @@ pub const fn retry_policy_from_dto(r: &RetryPolicyDto) -> RetryPolicy {
         base_delay_ms: r.base_delay_ms,
         backoff_multiplier: r.backoff_multiplier,
         max_delay_ms: r.max_delay_ms,
+    }
+}
+
+/// Maps core enqueue limits onto the UI DTO.
+#[must_use]
+pub const fn rate_limit_policy_to_dto(r: &RateLimitPolicy) -> RateLimitPolicyDto {
+    RateLimitPolicyDto {
+        max_in_flight: r.max_in_flight,
+        max_enqueue_per_second: r.max_enqueue_per_second,
+    }
+}
+
+/// Maps UI enqueue limits onto the core type.
+#[must_use]
+pub const fn rate_limit_policy_from_dto(r: &RateLimitPolicyDto) -> RateLimitPolicy {
+    RateLimitPolicy {
+        max_in_flight: r.max_in_flight,
+        max_enqueue_per_second: r.max_enqueue_per_second,
+    }
+}
+
+/// Maps the stored idempotency override onto the UI choice.
+///
+/// No override inherits Boson's default, which checks the key ([`IdempotencyMode::Lwt`]).
+#[must_use]
+pub const fn idempotency_mode_to_dto(mode: Option<IdempotencyMode>) -> IdempotencyModeDto {
+    match mode {
+        Some(IdempotencyMode::None) => IdempotencyModeDto::AtLeastOnce,
+        Some(IdempotencyMode::Lwt) | None => IdempotencyModeDto::ExactlyOnce,
+    }
+}
+
+/// Maps the UI choice onto the stored idempotency override.
+#[must_use]
+pub const fn idempotency_mode_from_dto(mode: IdempotencyModeDto) -> IdempotencyMode {
+    match mode {
+        IdempotencyModeDto::ExactlyOnce => IdempotencyMode::Lwt,
+        IdempotencyModeDto::AtLeastOnce => IdempotencyMode::None,
     }
 }
 
@@ -193,6 +236,7 @@ pub fn task_summary_from_parts(
         jobs_queued: stats.jobs_queued,
         runs_total: stats.runs_total,
         success_rate_pct: success_rate_pct(stats.runs_total, stats.success_count),
+        owner: None,
     }
 }
 
@@ -227,6 +271,8 @@ pub fn task_config_to_dto(config: &TaskConfig) -> TaskConfigDto {
         priority: config.priority,
         pool: config.pool.clone(),
         retry_policy: retry_policy_to_dto(&config.retry_policy),
+        rate_limit_policy: rate_limit_policy_to_dto(&config.rate_limit_policy),
+        idempotency_mode: idempotency_mode_to_dto(config.idempotency_mode),
         updated_at: config.updated_at.to_rfc3339(),
     }
 }
@@ -246,7 +292,286 @@ pub fn apply_task_config_update(
     if let Some(ref r) = req.retry_policy {
         config.retry_policy = retry_policy_from_dto(r);
     }
+    if let Some(ref r) = req.rate_limit_policy {
+        config.rate_limit_policy = rate_limit_policy_from_dto(r);
+    }
+    if let Some(mode) = req.idempotency_mode {
+        config.idempotency_mode = Some(idempotency_mode_from_dto(mode));
+    }
     config.updated_at = now;
+}
+
+/// Last four characters of an id behind an ellipsis ("…0412"); short ids come back whole.
+#[must_use]
+pub fn short_id(id: &str) -> String {
+    let count = id.chars().count();
+    if count <= 4 {
+        return id.to_string();
+    }
+    let tail: String = id.chars().skip(count - 4).collect();
+    format!("…{tail}")
+}
+
+/// Who enqueued a job, from its `actor_json`.
+///
+/// `System` actors read "System", service users "<service> app", and users go through
+/// `lookup` (the host's people lookup), falling back to the user id. Anything else reads
+/// "Unknown".
+#[must_use]
+pub fn actor_label(actor_json: &Value, lookup: impl Fn(&str) -> Option<String>) -> String {
+    if actor_json.get("System").is_some() {
+        return "System".to_string();
+    }
+    if let Some(service) = actor_json
+        .get("ServiceUser")
+        .and_then(|s| s.get("service_name"))
+        .and_then(Value::as_str)
+    {
+        let name = service.strip_prefix("svc:").unwrap_or(service);
+        return format!("{name} app");
+    }
+    if let Some(user_id) = actor_json
+        .get("User")
+        .and_then(|u| u.get("user_id"))
+        .and_then(Value::as_str)
+    {
+        return lookup(user_id).unwrap_or_else(|| user_id.to_string());
+    }
+    "Unknown".to_string()
+}
+
+/// Longest argument value [`job_label`] shows next to the id.
+const JOB_LABEL_ARG_MAX_CHARS: usize = 40;
+
+/// Short job label: the id's tail, then the first short text argument ("…0087 · batch b-42").
+#[must_use]
+pub fn job_label(job_id: &str, params_json: &Value) -> String {
+    let short = short_id(job_id);
+    let arg = params_json.as_object().and_then(|map| {
+        map.iter().find_map(|(name, value)| {
+            value
+                .as_str()
+                .filter(|v| !v.is_empty() && v.chars().count() <= JOB_LABEL_ARG_MAX_CHARS)
+                .map(|v| format!("{name} {v}"))
+        })
+    });
+    arg.map_or_else(|| short.clone(), |a| format!("{short} · {a}"))
+}
+
+/// Builds the run page's job block from a core [`Job`].
+#[must_use]
+pub fn run_job_info(job: &Job, lookup: impl Fn(&str) -> Option<String>) -> RunJobInfo {
+    RunJobInfo {
+        job_id: job.job_id.clone(),
+        label: job_label(&job.job_id, &job.params_json),
+        status: job_status_to_dto(job.status),
+        pool: job.pool.clone(),
+        started_by: actor_label(&job.actor_json, lookup),
+    }
+}
+
+/// Run duration for display: "12 ms", "30.0 s" or "2 min 5 s".
+#[must_use]
+pub fn format_duration_ms(ms: i64) -> String {
+    if ms < 1_000 {
+        return format!("{ms} ms");
+    }
+    if ms < 60_000 {
+        #[allow(clippy::cast_precision_loss)]
+        let secs = ms as f64 / 1_000.0;
+        return format!("{secs:.1} s");
+    }
+    let total_secs = ms / 1_000;
+    let (mins, secs) = (total_secs / 60, total_secs % 60);
+    if secs == 0 {
+        format!("{mins} min")
+    } else {
+        format!("{mins} min {secs} s")
+    }
+}
+
+/// A wait for retry sentences: "1 s", "1.5 s", "5 min", "1 h".
+#[must_use]
+pub fn format_wait_ms(ms: u64) -> String {
+    if ms < 60_000 {
+        if ms.is_multiple_of(1_000) {
+            return format!("{} s", ms / 1_000);
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let secs = ms as f64 / 1_000.0;
+        return format!("{secs:.1} s");
+    }
+    if ms < 3_600_000 {
+        let mins = ms / 60_000;
+        let rest = (ms % 60_000) / 1_000;
+        return if rest == 0 {
+            format!("{mins} min")
+        } else {
+            format!("{mins} min {rest} s")
+        };
+    }
+    let hours = ms / 3_600_000;
+    let rest = (ms % 3_600_000) / 60_000;
+    if rest == 0 {
+        format!("{hours} h")
+    } else {
+        format!("{hours} h {rest} min")
+    }
+}
+
+/// Wait before retry `n` (1-based), as the worker computes it:
+/// `min(base × multiplier^(n - 1), max)`.
+#[must_use]
+pub fn retry_wait_ms(policy: &RetryPolicyDto, n: u32) -> u64 {
+    let exp = i32::try_from(n.saturating_sub(1)).unwrap_or(i32::MAX);
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    let raw = (policy.base_delay_ms as f64) * policy.backoff_multiplier.powi(exp);
+    #[allow(clippy::cast_precision_loss)]
+    let cap = policy.max_delay_ms as f64;
+    if !raw.is_finite() || raw >= cap {
+        return policy.max_delay_ms;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let wait = raw.max(0.0) as u64;
+    wait.min(policy.max_delay_ms)
+}
+
+/// Most retries [`retry_schedule_sentence`] spells out before "and so on".
+const RETRY_SENTENCE_STEPS: u32 = 3;
+
+/// What a retry policy does, in one line:
+/// "With these values: retry after 1 s, then 2 s. A job gives up after 3 attempts."
+#[must_use]
+pub fn retry_schedule_sentence(policy: &RetryPolicyDto) -> String {
+    let attempts = policy.max_attempts.max(1);
+    let gives_up = if attempts == 1 {
+        "A job gives up after 1 attempt.".to_string()
+    } else {
+        format!("A job gives up after {attempts} attempts.")
+    };
+    let retries = attempts - 1;
+    if retries == 0 {
+        return format!("With these values: no retries. {gives_up}");
+    }
+    let shown = retries.min(RETRY_SENTENCE_STEPS);
+    let waits: Vec<String> = (1..=shown)
+        .map(|n| format_wait_ms(retry_wait_ms(policy, n)))
+        .collect();
+    let mut list = format!("retry after {}", waits[0]);
+    for w in &waits[1..] {
+        list.push_str(", then ");
+        list.push_str(w);
+    }
+    if retries > shown {
+        let _ = write!(
+            list,
+            ", and so on up to {}",
+            format_wait_ms(policy.max_delay_ms)
+        );
+    }
+    format!("With these values: {list}. {gives_up}")
+}
+
+/// The task's settings in one sentence, ending with when they last changed:
+/// "Runs on global at priority 1, up to 3 attempts, waiting 1 s then doubling up to 5 min.
+/// Changed on Nov 18."
+#[must_use]
+pub fn settings_sentence(config: &TaskConfig) -> String {
+    let r = &config.retry_policy;
+    let attempts = r.max_attempts.max(1);
+    let mut out = format!(
+        "Runs on {} at priority {}, up to {attempts} attempt{}",
+        config.pool,
+        config.priority,
+        if attempts == 1 { "" } else { "s" }
+    );
+    if attempts > 1 {
+        let growth = if (r.backoff_multiplier - 2.0).abs() < f64::EPSILON {
+            "doubling".to_string()
+        } else if (r.backoff_multiplier - 1.0).abs() < f64::EPSILON {
+            "the same each time".to_string()
+        } else {
+            format!("growing ×{}", r.backoff_multiplier)
+        };
+        let _ = write!(
+            out,
+            ", waiting {} then {growth} up to {}",
+            format_wait_ms(r.base_delay_ms),
+            format_wait_ms(r.max_delay_ms)
+        );
+    }
+    out.push('.');
+    let limit = config.rate_limit_policy.max_in_flight;
+    if limit > 0 {
+        let _ = write!(out, " At most {limit} waiting or running at once.");
+    }
+    let _ = write!(
+        out,
+        " Changed on {}.",
+        config.updated_at.format("%b %-d, %Y")
+    );
+    out
+}
+
+/// Plain-language label for a JSON Schema `type`.
+fn schema_type_label(ty: Option<&str>) -> &'static str {
+    match ty {
+        Some("string") => "Text",
+        Some("integer") => "Whole number",
+        Some("number") => "Number",
+        Some("boolean") => "Yes or no",
+        Some("array") => "List",
+        Some("object") => "Object",
+        Some("null") => "Nothing",
+        _ => "Any",
+    }
+}
+
+/// Arguments table rows from a task's signature JSON (a JSON Schema object).
+///
+/// Reads `properties` (name → `type`, `description`). A signature without `properties`, or
+/// one that isn't JSON, has no rows.
+#[must_use]
+pub fn task_arguments_from_signature(signature_json: &str) -> Vec<TaskArgumentRow> {
+    let Ok(value) = serde_json::from_str::<Value>(signature_json) else {
+        return Vec::new();
+    };
+    let Some(props) = value.get("properties").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    props
+        .iter()
+        .map(|(name, prop)| TaskArgumentRow {
+            name: name.clone(),
+            type_label: schema_type_label(prop.get("type").and_then(Value::as_str)).to_string(),
+            description: prop
+                .get("description")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        })
+        .collect()
+}
+
+/// Top-level `description` from a task's signature JSON, if it has one.
+#[must_use]
+pub fn task_description_from_signature(signature_json: &str) -> Option<String> {
+    serde_json::from_str::<Value>(signature_json)
+        .ok()?
+        .get("description")?
+        .as_str()
+        .map(str::trim)
+        .filter(|d| !d.is_empty())
+        .map(str::to_string)
+}
+
+/// Whether a task is at its "most at once" limit (`0` means no limit).
+#[must_use]
+pub const fn at_in_flight_limit(active: u32, max_in_flight: u32) -> bool {
+    max_in_flight > 0 && active >= max_in_flight
 }
 
 /// Builds dashboard KPI counters after coordinator queries resolve.

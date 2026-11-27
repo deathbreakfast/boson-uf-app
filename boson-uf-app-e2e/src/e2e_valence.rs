@@ -9,7 +9,7 @@ use boson_core::{
     ExecutionContext, Job, JobStatus, JsonExecutionContextFactory, QueueBackend, QueueRouter, Run,
     RunStatus,
 };
-use boson_runtime::{Boson, TaskDescriptor, TaskRegistry};
+use boson_runtime::{Boson, TaskDefaults, TaskDescriptor, TaskRegistry};
 use chrono::Utc;
 use gauge::manifest_sync::{
     sync_permission_manifests, PermissionDomainInput, PermissionInput, PermissionManifestInput,
@@ -53,13 +53,31 @@ fn e2e_echo_invoke(
     Box::pin(async { Ok(()) })
 }
 
+/// Task type the Settings save spec edits, so its limits never block other specs' enqueues.
+pub const E2E_SETTINGS_TASK_NAME: &str = "e2e_settings";
+
+/// Task type the Limits spec fills to its "most at once" limit.
+pub const E2E_LIMITED_TASK_NAME: &str = "e2e_limited";
+
+/// Signature of [`E2E_TASK_NAME`]: a description and one described argument, so the task
+/// type page has an Arguments table to show.
+const E2E_ECHO_SIGNATURE: &str = r#"{"description":"Echoes its input back. Used by the end-to-end tests.","properties":{"batch":{"type":"string","description":"The batch to echo, like batch-0042."}}}"#;
+
 fn e2e_task_registry() -> TaskRegistry {
     let mut registry = TaskRegistry::new();
-    let desc: &'static TaskDescriptor = Box::leak(Box::new(TaskDescriptor::new(
+    let echo: &'static TaskDescriptor = Box::leak(Box::new(TaskDescriptor::with_defaults(
         E2E_TASK_NAME,
         e2e_echo_invoke,
+        E2E_ECHO_SIGNATURE,
+        0,
+        TaskDefaults::standard(),
     )));
-    registry.register(desc);
+    registry.register(echo);
+    for name in [E2E_SETTINGS_TASK_NAME, E2E_LIMITED_TASK_NAME] {
+        let desc: &'static TaskDescriptor =
+            Box::leak(Box::new(TaskDescriptor::new(name, e2e_echo_invoke)));
+        registry.register(desc);
+    }
     registry
 }
 
@@ -524,6 +542,90 @@ pub async fn seed_filter_runs() -> anyhow::Result<RunsSeed> {
 
 fn uuid_suffix() -> String {
     Run::new("x", "x", 1).run_id.replace('-', "")
+}
+
+/// User id the failed-job fixture runs as; [`e2e_people_lookup`] names it.
+pub const E2E_PERSON_ID: &str = "e2e-user-ada";
+
+/// Failed job the run detail spec opens: three failed attempts, no attempts left.
+pub const E2E_FAILED_JOB_ID: &str = "e2e-failed-job-0087";
+
+/// Upsert a failed [`E2E_TASK_NAME`] job with three failed runs and return the last run's id.
+/// Fixed ids make repeat calls overwrite rather than add.
+pub async fn seed_failed_job() -> anyhow::Result<String> {
+    let queue = e2e_queue();
+    let now = Utc::now();
+    let mut job = Job::new(
+        E2E_TASK_NAME,
+        serde_json::json!({"User": {"user_id": E2E_PERSON_ID}}),
+        serde_json::json!({"batch": "batch-0042"}),
+        1,
+        "global",
+        0,
+        None,
+    );
+    job.job_id = E2E_FAILED_JOB_ID.to_string();
+    job.created_at = now - chrono::Duration::minutes(10);
+    job.status = JobStatus::Failed;
+    job.attempt = 3;
+    queue.upsert_job(&job).await?;
+
+    let mut last_run_id = String::new();
+    for attempt in 1..=3_i32 {
+        let mut run = Run::new(E2E_FAILED_JOB_ID, E2E_TASK_NAME, attempt);
+        run.run_id = format!("e2e-failed-run-000{attempt}");
+        run.started_at = now - chrono::Duration::minutes(i64::from(8 - 2 * attempt));
+        run.finished_at = Some(run.started_at + chrono::Duration::seconds(30));
+        run.duration_ms = Some(30_000);
+        run.status = RunStatus::Failed;
+        run.error_message = Some(format!(
+            "invoice sync failed on attempt {attempt}: ledger API returned 401 Unauthorized"
+        ));
+        queue.upsert_run(&run).await?;
+        last_run_id = run.run_id;
+    }
+    Ok(last_run_id)
+}
+
+/// Jobs waiting for [`E2E_LIMITED_TASK_NAME`]; its "most at once" limit is set to this.
+pub const E2E_LIMITED_ACTIVE: u32 = 2;
+
+/// Put [`E2E_LIMITED_TASK_NAME`] at its limit: [`E2E_LIMITED_ACTIVE`] queued jobs and a
+/// "most at once" limit of the same number.
+pub async fn seed_limited_task() -> anyhow::Result<()> {
+    let queue = e2e_queue();
+    for i in 0..E2E_LIMITED_ACTIVE {
+        let mut job = Job::new(
+            E2E_LIMITED_TASK_NAME,
+            serde_json::json!({"System": {"operation": "e2e_limited"}}),
+            serde_json::json!({}),
+            1,
+            "global",
+            0,
+            None,
+        );
+        job.job_id = format!("e2e-limited-{i}");
+        queue.upsert_job(&job).await?;
+    }
+    let backend = e2e_boson_backend();
+    let mut config = backend.get_task_config(E2E_LIMITED_TASK_NAME).await?;
+    config.rate_limit_policy.max_in_flight = E2E_LIMITED_ACTIVE;
+    config.updated_at = Utc::now();
+    backend.upsert_task_config(config).await?;
+    Ok(())
+}
+
+struct E2ePeople;
+
+impl boson_app::BosonPeopleLookup for E2ePeople {
+    fn display_name(&self, user_id: &str) -> Option<String> {
+        (user_id == E2E_PERSON_ID).then(|| "Ada Mensah".to_string())
+    }
+}
+
+/// People lookup stub so the run page's "Started by" shows a name.
+pub fn e2e_people_lookup() -> Arc<dyn boson_app::BosonPeopleLookup> {
+    Arc::new(E2ePeople)
 }
 
 pub fn e2e_system_valence() -> Valence {

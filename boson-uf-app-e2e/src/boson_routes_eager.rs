@@ -7,14 +7,13 @@
 
 use boson_app::{
     BosonJobsPage, BosonLayout, BosonQueueRedirect, BosonRootPage, BosonRunDetailPage,
-    BosonRunsIndexPage, BosonTaskConfigPage, BosonTaskDetailPage, BosonTasksIndexPage,
+    BosonRunsIndexPage, BosonTaskConfigRedirect, BosonTaskDetailPage, BosonTasksIndexPage,
 };
 use leptos::prelude::*;
 use leptos_router::{
     components::{ParentRoute, Route},
     path,
 };
-use orbital::routes::RequireAuthenticated;
 
 /// Same paths as [`boson_app::BosonRoutes`], without Lazy route views.
 #[component(transparent)]
@@ -24,7 +23,7 @@ pub fn BosonRoutesEager() -> impl leptos_router::MatchNestedRoutes + Clone {
             <Route path=path!("") view=BosonRootPage />
             <Route path=path!("tasks") view=BosonTasksIndexPage />
             <Route path=path!("tasks/:task_name") view=BosonTaskDetailPage />
-            <Route path=path!("tasks/:task_name/config") view=BosonVerifiedTaskConfigEager />
+            <Route path=path!("tasks/:task_name/config") view=BosonTaskConfigRedirect />
             <Route path=path!("jobs") view=BosonJobsPage />
             <Route path=path!("queue") view=BosonQueueRedirect />
             <Route path=path!("runs") view=BosonRunsIndexPage />
@@ -32,13 +31,4 @@ pub fn BosonRoutesEager() -> impl leptos_router::MatchNestedRoutes + Clone {
         </ParentRoute>
     }
     .into_inner()
-}
-
-#[component]
-fn BosonVerifiedTaskConfigEager() -> impl IntoView {
-    view! {
-        <RequireAuthenticated requires_email_verification=true>
-            <BosonTaskConfigPage />
-        </RequireAuthenticated>
-    }
 }

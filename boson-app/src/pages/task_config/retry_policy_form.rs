@@ -1,86 +1,74 @@
 use leptos::prelude::*;
-use orbital::components::{Card, FormHint, SpacingSize};
-use orbital::primitives::{
-    Flex, InfoLabel, InfoLabelInfo, Input, InputAppearance, InputType, Label,
-};
+use orbital::components::{Caption1, Card, SpacingSize};
+use orbital::primitives::Flex;
 
-use crate::components::{
-    backoff_multiplier_help, initial_delay_hint, max_attempts_hint, max_delay_help,
-    retry_policy_help, BosonHelpCardHeader,
-};
+use crate::components::BosonHelpCardHeader;
+use crate::server::RetryPolicyDto;
 
-/// Retry policy form section (max attempts, delays, backoff).
+use super::SettingsNumberField;
+
+/// "Retries" card: total tries, waits in seconds, growth, and what those values do.
 #[component]
 pub fn RetryPolicyForm(
-    /// Two-way signal holding the max attempts.
+    /// Max attempts text.
     max_attempts_str: RwSignal<String>,
-    /// Two-way signal holding the base delay milliseconds.
-    base_delay_ms_str: RwSignal<String>,
-    /// Two-way signal holding the max delay milliseconds.
-    max_delay_ms_str: RwSignal<String>,
-    /// Two-way signal holding the backoff multiplier.
-    backoff_multiplier_str: RwSignal<String>,
+    /// Field message for max attempts.
+    max_attempts_error: Signal<Option<String>>,
+    /// First wait text, in seconds.
+    first_wait_str: RwSignal<String>,
+    /// Field message for the first wait.
+    first_wait_error: Signal<Option<String>>,
+    /// Longest wait text, in seconds.
+    longest_wait_str: RwSignal<String>,
+    /// Field message for the longest wait.
+    longest_wait_error: Signal<Option<String>>,
+    /// Multiplier text.
+    multiplier_str: RwSignal<String>,
+    /// Field message for the multiplier.
+    multiplier_error: Signal<Option<String>>,
+    /// The policy when every field parses.
+    policy: Memo<Option<RetryPolicyDto>>,
 ) -> impl IntoView {
     view! {
         <Card>
             <BosonHelpCardHeader
-                title="Retry Policy"
-                description="Tune how failed runs are retried before the job is marked failed."
-                info=retry_policy_help()
+                title="Retries"
+                description="What Boson does when a run fails."
             />
             <Flex vertical=true gap=SpacingSize::Size160.flex_gap() padding=SpacingSize::Size160.inset()>
-                <Flex vertical=true gap=SpacingSize::Size40.flex_gap()>
-                    <Label>"Max Attempts"</Label>
-                    <Input
-                        bind=max_attempts_str
-                        appearance=InputAppearance {
-                            input_type: Signal::from(InputType::Number),
-                            ..Default::default()
-                        }
-                    />
-                    <FormHint>{max_attempts_hint()}</FormHint>
-                </Flex>
-                <Flex vertical=true gap=SpacingSize::Size40.flex_gap()>
-                    <Label>"Initial Delay (ms)"</Label>
-                    <Input
-                        bind=base_delay_ms_str
-                        appearance=InputAppearance {
-                            input_type: Signal::from(InputType::Number),
-                            ..Default::default()
-                        }
-                    />
-                    <FormHint>{initial_delay_hint()}</FormHint>
-                </Flex>
-                <Flex vertical=true gap=SpacingSize::Size40.flex_gap()>
-                    <InfoLabel>
-                        <Label>"Max Delay (ms)"</Label>
-                        <InfoLabelInfo slot>
-                            {max_delay_help()}
-                        </InfoLabelInfo>
-                    </InfoLabel>
-                    <Input
-                        bind=max_delay_ms_str
-                        appearance=InputAppearance {
-                            input_type: Signal::from(InputType::Number),
-                            ..Default::default()
-                        }
-                    />
-                </Flex>
-                <Flex vertical=true gap=SpacingSize::Size40.flex_gap()>
-                    <InfoLabel>
-                        <Label>"Backoff Multiplier"</Label>
-                        <InfoLabelInfo slot>
-                            {backoff_multiplier_help()}
-                        </InfoLabelInfo>
-                    </InfoLabel>
-                    <Input
-                        bind=backoff_multiplier_str
-                        appearance=InputAppearance {
-                            input_type: Signal::from(InputType::Number),
-                            ..Default::default()
-                        }
-                    />
-                </Flex>
+                <SettingsNumberField
+                    label="Max attempts"
+                    testid="task-config-max-attempts"
+                    value=max_attempts_str
+                    error=max_attempts_error
+                    hint="Total tries, including the first. 1 turns retries off. 1 to 20."
+                />
+                <SettingsNumberField
+                    label="First wait (seconds)"
+                    testid="task-config-first-wait"
+                    value=first_wait_str
+                    error=first_wait_error
+                    hint="How long to wait before the first retry."
+                />
+                <SettingsNumberField
+                    label="Longest wait (seconds)"
+                    testid="task-config-longest-wait"
+                    value=longest_wait_str
+                    error=longest_wait_error
+                    hint="The wait between retries never grows past this."
+                />
+                <SettingsNumberField
+                    label="Wait grows by"
+                    testid="task-config-multiplier"
+                    value=multiplier_str
+                    error=multiplier_error
+                    hint="Each wait is the last one times this. 2 doubles it."
+                />
+                {move || policy.get().map(|p| view! {
+                    <div data-testid="task-config-retry-sentence">
+                        <Caption1>{boson_backend::retry_schedule_sentence(&p)}</Caption1>
+                    </div>
+                })}
             </Flex>
         </Card>
     }

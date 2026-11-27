@@ -185,6 +185,36 @@ pub fn boson_runs_job_filter_path(job_id: &str) -> String {
     format!("/boson/runs?job={}", encode_ops_path_segment(job_id))
 }
 
+/// `/boson/tasks/{encoded}?tab=settings`: the task type page's Settings tab.
+#[must_use]
+pub fn boson_task_settings_path(task_name: &str) -> String {
+    format!("{}?tab=settings", boson_task_path(task_name))
+}
+
+/// Jobs of one task (`/boson/jobs?task=`).
+#[must_use]
+pub fn boson_task_waiting_jobs_path(task_name: &str) -> String {
+    format!("/boson/jobs?task={}", encode_ops_path_segment(task_name))
+}
+
+/// Runs of one task (`/boson/runs?task=`).
+#[must_use]
+pub fn boson_task_runs_path(task_name: &str) -> String {
+    format!("/boson/runs?task={}", encode_ops_path_segment(task_name))
+}
+
+/// Failed runs of one task (`/boson/runs?task=&status=failed`).
+#[must_use]
+pub fn boson_task_failed_runs_path(task_name: &str) -> String {
+    format!("{}&status=failed", boson_task_runs_path(task_name))
+}
+
+/// Jobs on one queue (`/boson/jobs?pool=`).
+#[must_use]
+pub fn boson_queue_pool_path(pool: &str) -> String {
+    format!("/boson/jobs?pool={}", encode_ops_path_segment(pool))
+}
+
 /// Dashboard chart window: last 24 hours (seconds).
 pub const RANGE_SECS_24H: i64 = 86_400;
 /// Dashboard chart window: last 7 days (seconds).
@@ -195,7 +225,7 @@ pub const MIN_TASK_PRIORITY: i32 = -1_000;
 /// Inclusive priority bounds accepted by the ops UI config update.
 pub const MAX_TASK_PRIORITY: i32 = 10_000;
 /// Maximum retry attempts (including the first try) accepted from the UI.
-pub const MAX_RETRY_ATTEMPTS: u32 = 100;
+pub const MAX_RETRY_ATTEMPTS: u32 = 20;
 /// Maximum backoff delay (ms) accepted from the UI.
 pub const MAX_RETRY_DELAY_MS: u64 = 86_400_000;
 /// Maximum Unicode scalar count for a pool name in a config update.
@@ -281,6 +311,7 @@ impl std::error::Error for BosonInputError {}
 ///     priority: None,
 ///     pool: Some(pool.into()),
 ///     retry_policy: None,
+///     ..Default::default()
 /// };
 /// assert!(validate_pool_offered(&req("global"), "global", &offered).is_ok());
 /// assert_eq!(
@@ -365,4 +396,71 @@ pub fn validate_task_config_update(
         }
     }
     Ok(())
+}
+
+/// Longest retry wait the Settings form accepts, in seconds (matches [`MAX_RETRY_DELAY_MS`]).
+pub const MAX_RETRY_WAIT_SECS: u64 = MAX_RETRY_DELAY_MS / 1_000;
+
+/// Largest "wait grows by" multiplier the Settings form accepts.
+pub const MAX_BACKOFF_MULTIPLIER: f64 = 100.0;
+
+/// Parses a Settings form field that takes a whole number from `min` to `max`.
+///
+/// # Errors
+///
+/// The field message ("Enter a whole number from 1 to 20.") when the text isn't a whole
+/// number in range, so the form can show it and keep Save off.
+pub fn parse_whole_number_field(raw: &str, min: i64, max: i64) -> Result<i64, String> {
+    raw.trim()
+        .parse::<i64>()
+        .ok()
+        .filter(|n| (min..=max).contains(n))
+        .ok_or_else(|| format!("Enter a whole number from {min} to {max}."))
+}
+
+/// Parses a Settings form wait given in seconds (decimals allowed) into milliseconds.
+///
+/// # Errors
+///
+/// The field message when the text isn't a number of seconds from 0 to
+/// [`MAX_RETRY_WAIT_SECS`].
+pub fn parse_wait_seconds_field(raw: &str) -> Result<u64, String> {
+    let message = || format!("Enter a number of seconds from 0 to {MAX_RETRY_WAIT_SECS}.");
+    let secs = raw.trim().parse::<f64>().map_err(|_| message())?;
+    #[allow(clippy::cast_precision_loss)]
+    let max = MAX_RETRY_WAIT_SECS as f64;
+    if !secs.is_finite() || !(0.0..=max).contains(&secs) {
+        return Err(message());
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let ms = (secs * 1_000.0).round() as u64;
+    Ok(ms)
+}
+
+/// Parses the Settings form's "wait grows by" multiplier.
+///
+/// # Errors
+///
+/// The field message when the text isn't a number above 0 and at most
+/// [`MAX_BACKOFF_MULTIPLIER`].
+pub fn parse_multiplier_field(raw: &str) -> Result<f64, String> {
+    raw.trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|m| m.is_finite() && *m > 0.0 && *m <= MAX_BACKOFF_MULTIPLIER)
+        .ok_or_else(|| {
+            format!("Enter a number above 0 and at most {MAX_BACKOFF_MULTIPLIER}, like 2.")
+        })
+}
+
+/// Milliseconds as the Settings form shows seconds ("1", "1.5", "300").
+#[must_use]
+pub fn ms_to_seconds_field(ms: u64) -> String {
+    if ms.is_multiple_of(1_000) {
+        (ms / 1_000).to_string()
+    } else {
+        #[allow(clippy::cast_precision_loss)]
+        let secs = ms as f64 / 1_000.0;
+        format!("{secs}")
+    }
 }

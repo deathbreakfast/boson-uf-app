@@ -2,19 +2,28 @@ use leptos::prelude::*;
 use orbital::components::{Body1, Caption2, Card};
 use orbital::primitives::{Grid, GridConfig, GridItem, InfoLabel, InfoLabelInfo};
 
-use crate::components::{
-    attempt_help, duration_help, BosonCardContent, BosonTableLink, RunStatusBadge,
-};
-use crate::server::RunSummary;
+use crate::components::{duration_help, BosonCardContent, BosonTableLink};
+use crate::server::RunDetail;
 
-/// Metadata grid showing run details (ID, job, task, status, timestamps, etc.).
+/// Metadata grid for a run: task, job and queue as links, who started it, times, and the full
+/// run id last.
 #[component]
 pub fn RunInfoGrid(
-    /// Run to display.
-    run: RunSummary,
+    /// Run detail to display.
+    detail: RunDetail,
 ) -> impl IntoView {
-    let job_id = run.job_id.clone();
-    let job_href = boson_backend::boson_runs_job_filter_path(&job_id);
+    let run = detail.run;
+    let task_href = boson_backend::boson_task_path(&run.task_name);
+    let job_href = boson_backend::boson_runs_job_filter_path(&run.job_id);
+    let job_label = detail
+        .job
+        .as_ref()
+        .map_or_else(|| boson_backend::short_id(&run.job_id), |j| j.label.clone());
+    let queue = detail.job.as_ref().map(|j| j.pool.clone());
+    let started_by = detail.job.as_ref().map(|j| j.started_by.clone());
+    let duration = run
+        .duration_ms
+        .map_or_else(|| "-".to_string(), boson_backend::format_duration_ms);
 
     let (style_sheet, class_names) = turf::inline_style_sheet_values! {
         .Label { color: var(--orb-color-text-tertiary); }
@@ -24,32 +33,38 @@ pub fn RunInfoGrid(
         <style>{style_sheet}</style>
         <Card>
             <BosonCardContent>
+                <div data-testid="run-info-grid">
                 <Grid config=GridConfig::with_gaps(2, 24, 8)>
-                    <GridItem><Caption2 class=class_names.label>"Run ID"</Caption2></GridItem>
-                    <GridItem><Body1>{run.run_id.clone()}</Body1></GridItem>
-
-                    <GridItem><Caption2 class=class_names.label>"Job ID"</Caption2></GridItem>
-                    <GridItem>
-                        <BosonTableLink href=job_href>
-                            {job_id}
-                        </BosonTableLink>
-                    </GridItem>
-
                     <GridItem><Caption2 class=class_names.label>"Task"</Caption2></GridItem>
-                    <GridItem><Body1>{run.task_name.clone()}</Body1></GridItem>
-
-                    <GridItem><Caption2 class=class_names.label>"Status"</Caption2></GridItem>
-                    <GridItem><RunStatusBadge status=run.status /></GridItem>
-
                     <GridItem>
-                        <InfoLabel>
-                            <Caption2 class=class_names.label>"Attempt"</Caption2>
-                            <InfoLabelInfo slot>
-                                {attempt_help()}
-                            </InfoLabelInfo>
-                        </InfoLabel>
+                        <span data-testid="run-info-task">
+                            <BosonTableLink href=task_href>{run.task_name.clone()}</BosonTableLink>
+                        </span>
                     </GridItem>
-                    <GridItem><Body1>{run.attempt}</Body1></GridItem>
+
+                    <GridItem><Caption2 class=class_names.label>"Job"</Caption2></GridItem>
+                    <GridItem>
+                        <span data-testid="run-info-job">
+                            <BosonTableLink href=job_href>{job_label}</BosonTableLink>
+                        </span>
+                    </GridItem>
+
+                    {queue.map(|pool| {
+                        let href = boson_backend::boson_queue_pool_path(&pool);
+                        view! {
+                            <GridItem><Caption2 class=class_names.label>"Queue"</Caption2></GridItem>
+                            <GridItem>
+                                <span data-testid="run-info-queue">
+                                    <BosonTableLink href=href>{pool}</BosonTableLink>
+                                </span>
+                            </GridItem>
+                        }
+                    })}
+
+                    {started_by.map(|who| view! {
+                        <GridItem><Caption2 class=class_names.label>"Started by"</Caption2></GridItem>
+                        <GridItem><Body1 attr:data-testid="run-info-started-by">{who}</Body1></GridItem>
+                    })}
 
                     <GridItem><Caption2 class=class_names.label>"Started"</Caption2></GridItem>
                     <GridItem><Body1>{run.started_at.clone()}</Body1></GridItem>
@@ -65,8 +80,12 @@ pub fn RunInfoGrid(
                             </InfoLabelInfo>
                         </InfoLabel>
                     </GridItem>
-                    <GridItem><Body1>{run.duration_ms.map_or_else(|| "-".to_string(), |ms| format!("{ms} ms"))}</Body1></GridItem>
+                    <GridItem><Body1>{duration}</Body1></GridItem>
+
+                    <GridItem><Caption2 class=class_names.label>"Run id"</Caption2></GridItem>
+                    <GridItem><Caption2>{run.run_id.clone()}</Caption2></GridItem>
                 </Grid>
+                </div>
             </BosonCardContent>
         </Card>
     }
