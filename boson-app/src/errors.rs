@@ -82,7 +82,15 @@ pub fn friendly_message(message: &str, owners: Option<&str>) -> FriendlyError {
         );
     }
     if let Some(rest) = after(message, uf_product_access_denied_prefix()) {
-        return FriendlyError::new("You don't have access to this", rest.trim().to_string());
+        // uf_product writes "You need <action> on <resource>."; anything else stays generic.
+        let rest = rest.trim();
+        let detail =
+            if rest.starts_with("You need ") && rest.contains(" on ") && rest.ends_with('.') {
+                rest.to_string()
+            } else {
+                "Ask one of its owners for access.".to_string()
+            };
+        return FriendlyError::new("You don't have access to this", detail);
     }
     if let Some(permission) = after(message, "permission_denied::") {
         let permission = permission.split_whitespace().next().unwrap_or_default();
@@ -124,11 +132,18 @@ pub fn friendly_message(message: &str, owners: Option<&str>) -> FriendlyError {
             "It may have been removed. Go back and pick it again.",
         );
     }
-    if lower.contains("choose at") {
-        return FriendlyError::new("Pick fewer jobs", sentence_case(message));
+    // Only Boson's own job-selection messages pass through; their wording is fixed.
+    if lower.contains("choose at least one job") {
+        return FriendlyError::new("Pick a job first", "Choose at least one job.");
     }
-    if lower.contains("invalid") || lower.contains("must be") {
-        return FriendlyError::new("That value isn't valid", validation_sentence(message));
+    if lower.contains("choose at most") {
+        return FriendlyError::new(
+            "Pick fewer jobs",
+            format!(
+                "Choose at most {} jobs at once.",
+                boson_backend::MAX_PAGE_LIST_LIMIT
+            ),
+        );
     }
     FriendlyError::new(
         "Boson's coordinator didn't answer",
@@ -236,6 +251,24 @@ mod tests {
         assert_eq!(
             msg("error running server function: Failed to load queue stats: timeout").title,
             "Boson's coordinator didn't answer"
+        );
+    }
+
+    #[test]
+    fn unknown_backend_text_never_passes_through() {
+        for raw in [
+            "error running server function: invalid column \"secret_token\" in table jobs",
+            "ACCESS:denied: backend said: db row 42 locked",
+            "this value must be shorter than internal_limit_x",
+        ] {
+            let shown = msg(raw).sentence();
+            assert!(!shown.contains("secret_token"), "{shown}");
+            assert!(!shown.contains("row 42"), "{shown}");
+            assert!(!shown.contains("internal_limit_x"), "{shown}");
+        }
+        assert_eq!(
+            msg("ACCESS:denied: You need Edit on billing.").detail,
+            "You need Edit on billing."
         );
     }
 
