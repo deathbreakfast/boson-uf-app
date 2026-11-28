@@ -78,7 +78,7 @@ test.describe("e2e.access", () => {
     const retry = page.getByTestId(`failed-retry-${jobId}`);
     await expect(retry).toBeVisible({ timeout: 60_000 });
     await retry.locator("button").click();
-    await expect(page.getByTestId("retry-jobs-dialog")).toContainText("They run as you.");
+    await expect(page.getByTestId("retry-jobs-dialog")).toContainText("It runs as you.");
     await page.getByTestId("retry-jobs-confirm").locator("button").click();
     await expect(page.getByTestId("failed-jobs-success")).toContainText("Retried 1 job", {
       timeout: 60_000,
