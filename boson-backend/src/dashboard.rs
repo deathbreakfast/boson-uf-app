@@ -55,20 +55,121 @@ pub fn fill_bucket_range(
 ) {
     let mut cursor = align_run_bucket(since, bucket);
     let end = align_run_bucket(now, bucket);
-    let step = match bucket {
-        RunBucketGranularity::FourHourly => chrono::Duration::hours(4),
-        RunBucketGranularity::Daily => chrono::Duration::days(1),
-    };
+    let step = run_bucket_step(bucket);
     while cursor <= end {
         buckets.entry(cursor).or_insert(0);
         cursor += step;
     }
 }
 
-/// Builds successful/failed chart series from a bounded run list.
+/// Step between bucket starts.
+#[must_use]
+pub const fn run_bucket_step(bucket: RunBucketGranularity) -> chrono::Duration {
+    match bucket {
+        RunBucketGranularity::FourHourly => chrono::Duration::hours(4),
+        RunBucketGranularity::Daily => chrono::Duration::days(1),
+    }
+}
+
+/// Start of every chart bucket in the window ending at `now`, oldest first.
+#[must_use]
+pub fn run_bucket_starts(now: DateTime<Utc>, range_secs: i64) -> Vec<DateTime<Utc>> {
+    let bucket = run_bucket_granularity(range_secs);
+    let mut map = BTreeMap::new();
+    fill_bucket_range(
+        now - chrono::Duration::seconds(range_secs),
+        now,
+        bucket,
+        &mut map,
+    );
+    map.into_keys().collect()
+}
+
+/// Run outcome groups the dashboard chart stacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunOutcomeGroup {
+    /// `success`.
+    Succeeded,
+    /// `failed`.
+    Failed,
+    /// `timeout` or `canceled`.
+    TimedOutOrCanceled,
+}
+
+impl RunOutcomeGroup {
+    /// Every group, in chart order.
+    pub const ALL: [Self; 3] = [Self::Succeeded, Self::Failed, Self::TimedOutOrCanceled];
+
+    /// Stable series id.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Failed => "failed",
+            Self::TimedOutOrCanceled => "timed_out_or_canceled",
+        }
+    }
+
+    /// Legend label.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Succeeded => "Succeeded",
+            Self::Failed => "Failed",
+            Self::TimedOutOrCanceled => "Timed out or canceled",
+        }
+    }
+
+    /// Run statuses counted in this group.
+    #[must_use]
+    pub fn statuses(self) -> Vec<RunStatus> {
+        match self {
+            Self::Succeeded => vec![RunStatus::Success],
+            Self::Failed => vec![RunStatus::Failed],
+            Self::TimedOutOrCanceled => vec![RunStatus::Timeout, RunStatus::Canceled],
+        }
+    }
+
+    /// Group a finished status belongs to; `None` for runs still running.
+    #[must_use]
+    pub const fn of(status: RunStatus) -> Option<Self> {
+        match status {
+            RunStatus::Success => Some(Self::Succeeded),
+            RunStatus::Failed => Some(Self::Failed),
+            RunStatus::Timeout | RunStatus::Canceled => Some(Self::TimedOutOrCanceled),
+            RunStatus::Running => None,
+        }
+    }
+}
+
+/// Builds the three chart series from per-bucket counts in [`RunOutcomeGroup::ALL`] order.
 ///
-/// Failed series includes Failed / Timeout / Canceled outcomes and is omitted
-/// when every bucket is zero. Running attempts are ignored.
+/// `counts[i]` belongs to `starts[i]`; missing entries count as zero. Every series is kept,
+/// even when all its buckets are zero, so the legend and colours never shift.
+#[must_use]
+pub fn run_series_from_counts(
+    starts: &[DateTime<Utc>],
+    counts: &[[u32; 3]],
+) -> Vec<DashboardChartSeries> {
+    RunOutcomeGroup::ALL
+        .iter()
+        .enumerate()
+        .map(|(g, group)| DashboardChartSeries {
+            id: group.id().into(),
+            label: group.label().into(),
+            points: starts
+                .iter()
+                .enumerate()
+                .map(|(i, ts)| DashboardChartPoint {
+                    ts: *ts,
+                    value: f64::from(counts.get(i).map_or(0, |c| c[g])),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+/// Builds the three chart series from a run list, bucketing by `started_at`.
 #[must_use]
 pub fn run_stats_series_from_runs(
     runs: &[Run],
@@ -77,52 +178,20 @@ pub fn run_stats_series_from_runs(
 ) -> Vec<DashboardChartSeries> {
     let since = now - chrono::Duration::seconds(range_secs);
     let bucket = run_bucket_granularity(range_secs);
-
-    let mut success_buckets: BTreeMap<DateTime<Utc>, u32> = BTreeMap::new();
-    let mut failed_buckets: BTreeMap<DateTime<Utc>, u32> = BTreeMap::new();
-
+    let starts = run_bucket_starts(now, range_secs);
+    let mut counts = vec![[0u32; 3]; starts.len()];
     for run in runs.iter().filter(|r| r.started_at >= since) {
-        let bucket_ts = align_run_bucket(run.started_at, bucket);
-        match run.status {
-            RunStatus::Success => {
-                *success_buckets.entry(bucket_ts).or_insert(0) += 1;
-            }
-            RunStatus::Failed | RunStatus::Timeout | RunStatus::Canceled => {
-                *failed_buckets.entry(bucket_ts).or_insert(0) += 1;
-            }
-            RunStatus::Running => {}
+        let Some(group) = RunOutcomeGroup::of(run.status) else {
+            continue;
+        };
+        let ts = align_run_bucket(run.started_at, bucket);
+        if let Ok(i) = starts.binary_search(&ts) {
+            let g = RunOutcomeGroup::ALL
+                .iter()
+                .position(|x| *x == group)
+                .unwrap_or(0);
+            counts[i][g] += 1;
         }
     }
-
-    fill_bucket_range(since, now, bucket, &mut success_buckets);
-    fill_bucket_range(since, now, bucket, &mut failed_buckets);
-
-    let success_points: Vec<DashboardChartPoint> = success_buckets
-        .into_iter()
-        .map(|(ts, value)| DashboardChartPoint {
-            ts,
-            value: f64::from(value),
-        })
-        .collect();
-    let failed_points: Vec<DashboardChartPoint> = failed_buckets
-        .into_iter()
-        .map(|(ts, value)| DashboardChartPoint {
-            ts,
-            value: f64::from(value),
-        })
-        .collect();
-
-    let mut series = vec![DashboardChartSeries {
-        id: "successful".into(),
-        label: "Successful".into(),
-        points: success_points,
-    }];
-    if failed_points.iter().any(|p| p.value > 0.0) {
-        series.push(DashboardChartSeries {
-            id: "failed".into(),
-            label: "Failed".into(),
-            points: failed_points,
-        });
-    }
-    series
+    run_series_from_counts(&starts, &counts)
 }

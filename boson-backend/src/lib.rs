@@ -208,6 +208,7 @@ mod cursor_page;
 mod dashboard;
 mod lookup;
 mod map;
+mod ops;
 mod page_query;
 mod types;
 mod validate;
@@ -217,8 +218,9 @@ pub use cursor_page::{
     runs_cursor_scope, runs_list_start, runs_page_from_rows, ListStart, JOBS_CURSOR_SCOPE,
 };
 pub use dashboard::{
-    align_run_bucket, fill_bucket_range, run_bucket_granularity, run_stats_series_from_runs,
-    RunBucketGranularity,
+    align_run_bucket, fill_bucket_range, run_bucket_granularity, run_bucket_starts,
+    run_bucket_step, run_series_from_counts, run_stats_series_from_runs, RunBucketGranularity,
+    RunOutcomeGroup,
 };
 pub use lookup::{
     filter_tasks_by_query, find_job_by_id, find_run_by_id, find_task_by_name, sort_tasks_by_name,
@@ -232,6 +234,16 @@ pub use map::{
     run_job_info, run_status_to_dto, run_to_summary, settings_sentence, short_id, success_rate_pct,
     task_arguments_from_signature, task_config_to_dto, task_description_from_signature,
     task_summary_from_parts, TaskStatsAgg, ARGS_SUMMARY_VALUE_CHARS,
+};
+pub use ops::{
+    boson_failed_jobs_for_task_path, boson_failed_runs_for_task_path, boson_queue_jobs_path,
+    boson_queue_path, boson_runs_window_path, failing_more_than_usual, failing_most_rows,
+    most_common_error, needs_attention_lines, oldest_waiting_across, oldest_waiting_is_slow,
+    oldest_waiting_label, queue_state, queue_summary, sort_queues, success_rate_one_decimal,
+    wait_label, AttentionKind, FailedJobsByTask, FailingTaskRow, NeedsAttentionLine, QueueDetail,
+    QueueStateDto, QueueSummary, TaskFailureStats, BOSON_QUEUES_PATH, DEFAULT_OWNER_LABEL,
+    FAILING_MORE_THAN_USUAL_MIN, FAILING_MOST_ROWS, OLDEST_WAITING_WARN_SECS,
+    QUEUE_DETAIL_JOBS_CAP, QUEUE_STATS_WINDOW_SECS,
 };
 pub use page_query::{
     extract_status_filter, job_filter_from_request, job_status_key, parse_time_range,
@@ -251,9 +263,9 @@ pub use validate::{
     boson_task_failed_runs_path, boson_task_path, boson_task_runs_path, boson_task_settings_path,
     boson_task_waiting_jobs_path, encode_ops_path_segment, format_task_config_load_error,
     ms_to_seconds_field, parse_multiplier_field, parse_wait_seconds_field,
-    parse_whole_number_field, validate_job_id, validate_pool_offered, validate_range_secs,
-    validate_run_id, validate_task_config_update, validate_task_name, BosonIdError,
-    BosonInputError, MAX_BACKOFF_MULTIPLIER, MAX_BOSON_ID_CHARS, MAX_POOL_NAME_CHARS,
+    parse_whole_number_field, validate_job_id, validate_pool_name, validate_pool_offered,
+    validate_range_secs, validate_run_id, validate_task_config_update, validate_task_name,
+    BosonIdError, BosonInputError, MAX_BACKOFF_MULTIPLIER, MAX_BOSON_ID_CHARS, MAX_POOL_NAME_CHARS,
     MAX_RETRY_ATTEMPTS, MAX_RETRY_DELAY_MS, MAX_RETRY_WAIT_SECS, MAX_TASK_PRIORITY,
     MIN_TASK_PRIORITY, RANGE_SECS_24H, RANGE_SECS_7D,
 };
@@ -261,3 +273,7 @@ pub use validate::{
 #[cfg(test)]
 #[path = "unit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ops_tests.rs"]
+mod ops_tests;

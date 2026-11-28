@@ -26,15 +26,15 @@ fn sample_run(id: &str, status: RunStatus, started_at: chrono::DateTime<Utc>) ->
 
 #[test]
 fn dashboard_stats_aggregates_counts_happy_path() {
-    let stats = dashboard_stats(2, 5, 1, 12);
-    assert_eq!(stats.task_count, 2);
-    assert_eq!(stats.jobs_queued, 5);
+    let stats = dashboard_stats(5, 1, 12, None);
+    assert_eq!(stats.jobs_waiting, 5);
     assert_eq!(stats.jobs_running, 1);
-    assert_eq!(stats.runs_today, 12);
+    assert_eq!(stats.failed_24h, 12);
+    assert_eq!(stats.oldest_waiting_at, None);
 }
 
 #[test]
-fn run_stats_series_24h_includes_success_and_failed_happy_path() {
+fn run_stats_series_24h_includes_three_outcome_groups_happy_path() {
     let now = Utc.with_ymd_and_hms(2026, 1, 2, 12, 0, 0).unwrap();
     let runs = vec![
         sample_run("r1", RunStatus::Success, now - chrono::Duration::hours(2)),
@@ -42,11 +42,13 @@ fn run_stats_series_24h_includes_success_and_failed_happy_path() {
         sample_run("r3", RunStatus::Timeout, now - chrono::Duration::hours(4)),
     ];
     let series = run_stats_series_from_runs(&runs, now, 86_400);
-    assert_eq!(series.len(), 2);
-    assert_eq!(series[0].id, "successful");
+    assert_eq!(series.len(), 3);
+    assert_eq!(series[0].id, "succeeded");
     assert_eq!(series[1].id, "failed");
-    assert!(series[0].points.iter().any(|p| p.value > 0.0));
-    assert!(series[1].points.iter().any(|p| p.value > 0.0));
+    assert_eq!(series[2].id, "timed_out_or_canceled");
+    assert!(series
+        .iter()
+        .all(|s| s.points.iter().any(|p| p.value > 0.0)));
 }
 
 #[test]
@@ -58,8 +60,10 @@ fn run_stats_series_all_outside_window_zero_success_sad() {
         now - chrono::Duration::hours(48),
     )];
     let series = run_stats_series_from_runs(&runs, now, 86_400);
-    assert_eq!(series.len(), 1);
-    assert!(series[0].points.iter().all(|p| p.value == 0.0));
+    assert_eq!(series.len(), 3);
+    assert!(series
+        .iter()
+        .all(|s| s.points.iter().all(|p| p.value == 0.0)));
 }
 
 #[test]

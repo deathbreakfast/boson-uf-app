@@ -43,6 +43,7 @@ pub fn BosonLayout() -> impl IntoView {
                         <NavigationLink path=paths::ROOT value=paths::ROOT icon=icondata::AiHomeOutlined exact=true test_id="nav-boson-dashboard">"Dashboard"</NavigationLink>
                         <NavigationLink path=paths::TASKS value=paths::TASKS icon=icondata::AiAppstoreOutlined test_id="nav-boson-tasks">"Tasks"</NavigationLink>
                         <NavigationLink path=paths::JOBS value=paths::JOBS icon=icondata::AiUnorderedListOutlined test_id="nav-boson-jobs">"Jobs"</NavigationLink>
+                        <NavigationLink path=boson_backend::BOSON_QUEUES_PATH value=boson_backend::BOSON_QUEUES_PATH icon=icondata::AiPartitionOutlined test_id="nav-boson-queues">"Queues"</NavigationLink>
                         <NavigationLink path=paths::RUNS value=paths::RUNS icon=icondata::AiHistoryOutlined test_id="nav-boson-runs">"Runs"</NavigationLink>
                     </NavigationBody>
                 </Navigation>

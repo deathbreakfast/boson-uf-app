@@ -66,7 +66,7 @@ async fn inject_demo_session(mut req: Request<Body>, next: Next) -> Response {
 
 async fn boson_dashboard(Extension(session): Extension<DemoSession>) -> impl IntoResponse {
     // Same KPI builder the Leptos `get_dashboard_stats` server fn calls after Higgs auth.
-    let stats = boson_backend::dashboard_stats(3, 2, 1, 5);
+    let stats = boson_backend::dashboard_stats(2, 1, 5, None);
     Json(serde_json::json!({
         "path": "/boson",
         "user": session.user_id,
@@ -124,10 +124,9 @@ async fn main() {
     let body: serde_json::Value = serde_json::from_slice(&bytes).expect("json");
     assert_eq!(body["path"], "/boson");
     assert_eq!(body["user"], "demo-ops");
-    assert_eq!(body["stats"]["task_count"], 3);
-    assert_eq!(body["stats"]["jobs_queued"], 2);
+    assert_eq!(body["stats"]["jobs_waiting"], 2);
     assert_eq!(body["stats"]["jobs_running"], 1);
-    assert_eq!(body["stats"]["runs_today"], 5);
+    assert_eq!(body["stats"]["failed_24h"], 5);
     assert_eq!(body["inventory"]["app_id"], "boson");
     assert_eq!(body["inventory"]["route_path"], "/boson");
     assert_eq!(body["inventory"]["auth_gate"], "RequireAuthenticated");

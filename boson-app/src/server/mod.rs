@@ -10,7 +10,10 @@
 //! permission `BosonAdmin`. Task-config endpoints additionally mirror the UI
 //! email-verification gate via [`helpers::require_email_verified`]. Run history
 //! (`list_runs_page`, `list_runs_datatable_page`, `get_run`) also requires
-//! `BosonAdmin`.
+//! `BosonAdmin`. Dashboard reads that expose pool stats or run errors
+//! (`get_needs_attention`, `get_failing_most`) require `BosonAdmin` too. Queue
+//! endpoints (`list_queues`, `get_queue`, `pause_queue`, `resume_queue`,
+//! `purge_queue`) check `BosonAdmin` through one access helper in `queues.rs`.
 //!
 //! The UI uses paginated list endpoints (`get_tasks_page`, `list_jobs_page`,
 //! `list_runs_page`) and single-record getters (`get_task`, `get_run`, etc.).
@@ -29,6 +32,9 @@
 //! - Config load: `Failed to load task config:…` / `Task config not found:…`
 //! - Mutators: `Failed to cancel job:…` / `Failed to update config:…`; `retry_jobs` and
 //!   `drop_jobs` report per-job failures in `JobActionOutcome::failed`
+//! - Queues: `Queue not found:…`, `Failed to pause queue:…` / `Failed to resume queue:…` /
+//!   `Failed to purge queue:…`, and `Queues need an embedded Boson runtime on this host`
+//!   when the coordinator is remote
 //!
 //! Blank / oversized / path-unsafe ids are rejected by `boson_backend::validate_*`
 //! before coordinator IO. Detail hrefs use `boson_backend::boson_*_path` helpers so
@@ -40,6 +46,7 @@ mod gluon_pools;
 mod helpers;
 mod jobs;
 pub mod page_query;
+mod queues;
 mod runs;
 mod tasks;
 mod types;
@@ -50,11 +57,14 @@ pub use types::*;
 /// (manifest: [`crate::permissions::BosonPermission::BosonAdmin`]).
 pub const BOSON_ADMIN_PERMISSION: &str = "BosonAdmin";
 
-pub use dashboard::{get_dashboard_stats, get_run_stats_series};
+pub use dashboard::{
+    get_dashboard_stats, get_failing_most, get_needs_attention, get_run_stats_series,
+};
 pub use gluon_pools::list_gluon_pools_for_boson_task_config;
 pub use jobs::{
     cancel_job, drop_jobs, list_jobs_datatable_page, list_jobs_page, retry_jobs, JobAction,
 };
+pub use queues::{get_queue, list_queues, pause_queue, purge_queue, resume_queue};
 pub use runs::{
     get_run, get_run_detail, list_runs_datatable_page, list_runs_page, list_task_names,
 };

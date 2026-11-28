@@ -143,8 +143,13 @@ impl RunsFilters {
     }
 }
 
+/// The `YYYY-MM-DD` part of a `from` / `to` token; a chart bucket link passes full timestamps.
+fn date_part(token: &str) -> &str {
+    token.get(..10).unwrap_or(token)
+}
+
 fn date_value(date: &str) -> Option<OrbitalDateTime> {
-    chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+    chrono::NaiveDate::parse_from_str(date_part(date), "%Y-%m-%d")
         .ok()
         .and_then(|d| OrbitalDateTime::from_naive_date(d, DatetimeTimezone::Utc))
 }
@@ -197,10 +202,10 @@ fn runs_controls(
         if time.get_untracked() != key {
             time.set(key);
         }
-        if date_key(from_date.get_untracked()) != f.from && f.from.contains('-') {
+        if date_key(from_date.get_untracked()) != date_part(&f.from) && f.from.contains('-') {
             from_date.set(date_value(&f.from));
         }
-        if date_key(to_date.get_untracked()) != f.to {
+        if date_key(to_date.get_untracked()) != date_part(&f.to) {
             to_date.set(date_value(&f.to));
         }
     });
@@ -211,7 +216,14 @@ fn runs_controls(
             let from = date_key(from_date.get());
             let from = if from.is_empty() { today_key() } else { from };
             let to = date_key(to_date.get());
-            (from.clone(), if to.is_empty() { from } else { to })
+            let to = if to.is_empty() { from.clone() } else { to };
+            // Keep a bucket link's exact timestamps while the picked dates still match them.
+            let current = filters.get_untracked();
+            if from == date_part(&current.from) && to == date_part(&current.to) {
+                (current.from, current.to)
+            } else {
+                (from, to)
+            }
         } else {
             (time_key, String::new())
         };

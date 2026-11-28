@@ -295,7 +295,12 @@ fn task_config_drop_email_gate_sad_path() {
 #[test]
 fn index_pages_testid_and_list_bindings_happy_path() {
     let dashboard = read_app("pages/dashboard/mod.rs");
-    for needle in ["boson-dashboard", "get_dashboard_stats", "get_tasks"] {
+    for needle in [
+        "boson-dashboard",
+        "get_dashboard_stats",
+        "get_needs_attention",
+        "get_failing_most",
+    ] {
         assert!(
             dashboard.contains(needle),
             "BosonRootPage / dashboard missing `{needle}`"
@@ -465,6 +470,8 @@ fn lazy_routes_wire_pages_happy_path() {
         "BosonJobsPage",
         "BosonRunsIndexPage",
         "BosonRunDetailPage",
+        "BosonQueuesPage",
+        "BosonQueueDetailPage",
         "BosonLayout",
     ] {
         assert!(
@@ -476,7 +483,8 @@ fn lazy_routes_wire_pages_happy_path() {
 
 #[test]
 fn ops_path_helpers_encode_segments_happy_path() {
-    let recent = read_app("pages/dashboard/recent_tasks_table.rs");
+    let failing = read_app("pages/dashboard/failing_most.rs");
+    let queues = read_app("pages/queues/mod.rs");
     let task_detail = read_app("pages/task_detail/mod.rs");
     let task_actions = read_app("components/tasks_data_table/actions.rs");
     let tasks_table = read_app("components/tasks_data_table/mod.rs");
@@ -485,7 +493,8 @@ fn ops_path_helpers_encode_segments_happy_path() {
     let queue = read_app("components/queue_data_table/mod.rs");
     let run_info = read_app("pages/run_detail/run_info_grid.rs");
     for (label, src) in [
-        ("recent_tasks_table", recent.as_str()),
+        ("failing_most", failing.as_str()),
+        ("queues", queues.as_str()),
         ("task_detail", task_detail.as_str()),
         ("task_actions", task_actions.as_str()),
         ("tasks_data_table", tasks_table.as_str()),
@@ -513,10 +522,15 @@ fn ops_path_helpers_encode_segments_happy_path() {
 
 #[test]
 fn ops_path_helpers_drop_encoding_sad_path() {
-    let recent = read_app("pages/dashboard/recent_tasks_table.rs");
+    let failing = read_app("pages/dashboard/failing_most.rs");
+    let queues = read_app("pages/queues/mod.rs");
     assert!(
-        recent.contains("boson_backend::boson_task_path"),
+        failing.contains("boson_backend::boson_task_path"),
         "dropping boson_task_path reopens path-segment smuggling via task names"
+    );
+    assert!(
+        queues.contains("boson_backend::boson_queue_path"),
+        "dropping boson_queue_path reopens path-segment smuggling via queue names"
     );
     let runs_cols = read_app("components/runs_data_table/columns.rs");
     assert!(
@@ -555,4 +569,64 @@ fn jobs_lists_hide_details_without_admin_sad_path() {
         jobs[start..start + 200].contains("has_permission(super::BOSON_ADMIN_PERMISSION)"),
         "job details must stay behind BosonAdmin, as run errors are in the runs lists"
     );
+}
+
+#[test]
+fn queue_endpoints_share_one_access_check_happy_path() {
+    let queues = read_app("server/queues.rs");
+    for fn_name in [
+        "pub async fn list_queues",
+        "pub async fn get_queue",
+        "pub async fn pause_queue",
+        "pub async fn resume_queue",
+        "pub async fn purge_queue",
+    ] {
+        assert!(
+            queues.contains(fn_name),
+            "queues server missing `{fn_name}`"
+        );
+    }
+    assert!(
+        queues.contains("async fn authorize_queue")
+            && queues.contains("require_permission(super::BOSON_ADMIN_PERMISSION)"),
+        "queue endpoints must check BosonAdmin through authorize_queue"
+    );
+    let checks = queues
+        .matches("authorize_queue(&ctx, QueueAction::")
+        .count();
+    assert!(
+        checks >= 4,
+        "list, get, pause/resume and purge must each call authorize_queue (found {checks})"
+    );
+}
+
+#[test]
+fn queue_routes_and_nav_happy_path() {
+    let lib = read_app("lib.rs");
+    assert!(
+        lib.contains(r#"path!("queues")"#) && lib.contains(r#"path!("queues/:name")"#),
+        "BosonRoutes must mount /boson/queues and /boson/queues/:name"
+    );
+    let layout = read_app("layout.rs");
+    assert!(
+        layout.contains("nav-boson-queues"),
+        "layout must link to Queues"
+    );
+}
+
+#[test]
+fn dashboard_reads_with_pool_stats_or_run_errors_require_boson_admin_sad_path() {
+    let dashboard = read_app("server/dashboard.rs");
+    for fn_name in ["get_needs_attention", "get_failing_most"] {
+        let start = dashboard
+            .find(&format!("pub async fn {fn_name}"))
+            .unwrap_or_else(|| panic!("dashboard missing `{fn_name}`"));
+        let attr = dashboard[..start]
+            .rfind("#[uf_product_macros::server")
+            .expect("server attribute");
+        assert!(
+            dashboard[attr..start].contains(r#"permission = "BosonAdmin""#),
+            "`{fn_name}` returns pool stats or run errors and must require BosonAdmin"
+        );
+    }
 }

@@ -28,6 +28,23 @@ export type RunsSeed = {
   old_run_id: string;
 };
 
+/** Jobs and runs to add to one pool (the host runs no worker, so queued jobs stay queued). */
+export type OpsSeed = {
+  pool: string;
+  queued?: number;
+  running?: number;
+  failed_jobs?: number;
+  failed_runs?: number;
+};
+
+/** Error message on runs an `OpsSeed` marks failed. */
+export const OPS_ERROR = "Ledger API refused the token (401)";
+
+/** A pool name no other test uses. */
+export function uniquePool(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
+
 export async function seedAuth(
   page: Page,
   auth: SeedAuthKind,
@@ -38,6 +55,7 @@ export async function seedAuth(
     filterRuns?: boolean;
     failedJob?: boolean;
     atLimit?: boolean;
+    ops?: OpsSeed;
   },
 ) {
   const res = await page.request.post("/api/test/seed-data", {
@@ -49,6 +67,7 @@ export async function seedAuth(
       filter_runs: opts?.filterRuns ?? false,
       failed_job: opts?.failedJob ?? false,
       at_limit: opts?.atLimit ?? false,
+      ops: opts?.ops ?? null,
     },
   });
   expect(res.ok()).toBeTruthy();

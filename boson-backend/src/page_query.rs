@@ -178,7 +178,9 @@ fn status_keys(request: &PageRequest) -> Vec<String> {
 ///
 /// `from` takes `1h`, `24h`, `7d` or `30d` (that long before `now`) or a `YYYY-MM-DD` date
 /// (its midnight, UTC). `to` takes a date and includes it, so the range ends at the next
-/// midnight. `any`, blanks and anything that doesn't parse leave that end open.
+/// midnight. Either end also takes an RFC 3339 timestamp, used as is (the dashboard chart
+/// links a bucket this way, with `to` exclusive). `any`, blanks and anything that doesn't
+/// parse leave that end open.
 ///
 /// ```
 /// use boson_backend::parse_time_range;
@@ -203,12 +205,19 @@ pub fn parse_time_range(
         "24h" => Some(now - Duration::hours(24)),
         "7d" => Some(now - Duration::days(7)),
         "30d" => Some(now - Duration::days(30)),
-        other => parse_date(other),
+        other => parse_timestamp(other).or_else(|| parse_date(other)),
     });
-    let to = to
-        .and_then(|token| parse_date(token.trim()))
-        .map(|day| day + Duration::days(1));
+    let to = to.and_then(|token| {
+        let token = token.trim();
+        parse_timestamp(token).or_else(|| parse_date(token).map(|day| day + Duration::days(1)))
+    });
     (from, to)
+}
+
+fn parse_timestamp(token: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(token)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
 }
 
 fn parse_date(token: &str) -> Option<DateTime<Utc>> {

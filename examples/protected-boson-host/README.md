@@ -67,7 +67,7 @@ Dashboard helpers (Leptos-free):
 ```rust,ignore
 use boson_backend::dashboard_stats;
 
-let stats = dashboard_stats(task_count, jobs_queued, jobs_running, runs_today);
+let stats = dashboard_stats(jobs_waiting, jobs_running, failed_24h, oldest_waiting_at);
 ```
 
 Inventory names match `boson` / `/boson`. Layout uses `RequireAuthenticated`;

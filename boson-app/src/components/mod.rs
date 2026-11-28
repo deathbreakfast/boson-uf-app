@@ -14,6 +14,7 @@ mod queue_data_table;
 mod run_status_badge;
 mod runs_data_table;
 mod stat_card;
+mod static_table;
 mod table_link;
 mod task_summary_panel;
 mod tasks_data_table;
@@ -26,8 +27,8 @@ pub use card_surface::{boson_table_page_layout, BosonCardContent, BosonDataTable
 pub use card_surface::BosonTablePageClasses;
 pub use data_table_loading::{BosonDataTableRefetchSkeleton, BosonDataTableSkeletonRows};
 pub use help::{
-    attempt_help, duration_help, pool_help, run_outcomes_chart_help, runs_24h_help,
-    success_rate_help, tasks_overview_help, BosonHelpCardHeader, BosonHelpColumnHeader,
+    attempt_help, duration_help, failed_24h_help, failing_most_help, pool_help,
+    run_outcomes_chart_help, success_rate_help, BosonHelpCardHeader, BosonHelpColumnHeader,
 };
 pub use job_status_badge::JobStatusBadge;
 pub use motion::{boson_error_reveal_motion, boson_kpi_enter_motion};
@@ -38,6 +39,7 @@ pub use queue_data_table::{
 pub use run_status_badge::RunStatusBadge;
 pub use runs_data_table::{short_id_link, RunsDataTable, RunsFilters, RunsTableScope};
 pub use stat_card::BosonHelpStatCard;
-pub use table_link::{boson_table_link_styles, BosonTableLink, BosonTruncatedTableCellLink};
+pub use static_table::{no_toolbar, row_model, text_cell};
+pub use table_link::BosonTableLink;
 pub use task_summary_panel::TaskSummaryPanel;
 pub use tasks_data_table::{TaskCardActions, TasksDataTable};

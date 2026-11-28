@@ -278,14 +278,14 @@ pub trait BosonPeopleLookup: Send + Sync {
 /// Aggregate counters shown on the Boson dashboard.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DashboardStats {
-    /// Registered task count.
-    pub task_count: u32,
-    /// Jobs currently queued.
-    pub jobs_queued: u32,
+    /// Jobs waiting in every queue.
+    pub jobs_waiting: u32,
     /// Jobs currently running.
     pub jobs_running: u32,
-    /// Runs started in the last 24 hours.
-    pub runs_today: u32,
+    /// Runs that failed in the last 24 hours.
+    pub failed_24h: u32,
+    /// `created_at` of the oldest waiting job across every queue, if any are waiting.
+    pub oldest_waiting_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Time-series point for dashboard charts.
