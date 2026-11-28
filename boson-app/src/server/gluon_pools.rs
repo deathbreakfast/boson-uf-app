@@ -11,7 +11,10 @@ use super::helpers::{offered_pools, require_email_verified, require_session, tra
 use super::types::GluonPoolPickRow;
 
 /// Lists the pools a task can be routed to on this host.
-#[uf_product_macros::server(permission = "BosonAdmin")]
+///
+/// Needs a verified session only: the Settings form of any task type the reader can Edit uses
+/// it, and the Queues list already shows every pool name.
+#[uf_product_macros::server]
 pub async fn list_gluon_pools_for_boson_task_config() -> Result<Vec<GluonPoolPickRow>, ServerFnError>
 {
     let result = async {

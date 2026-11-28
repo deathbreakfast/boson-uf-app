@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use leptos::prelude::*;
 use leptos::task::spawn_local_scoped;
-use leptos_router::hooks::use_params_map;
+use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
+use leptos_router::NavigateOptions;
 use orbital::components::{
     Body1, Breadcrumb, BreadcrumbButton, BreadcrumbDivider, BreadcrumbItem, Caption1, Card,
     ContentContainer, EmptyState, Skeleton, SkeletonItem, SkeletonItemSize, SpacingSize, StatCard,
@@ -14,15 +15,71 @@ use orbital::primitives::{
     Link, MessageBar, MessageBarIntent, PagingMode,
 };
 
+use uf_product::access::{AccessCard, AccessDenied};
+
 use super::purge_dialog::PurgeDialog;
 use super::QueueStateBadge;
 use crate::components::{
     no_toolbar, row_model, text_cell, BosonCardContent, BosonHelpCardHeader, JobStatusBadge,
 };
+use crate::permissions::{denied_resource, queue_ref};
 use crate::server::{
     get_queue, pause_queue, resume_queue, JobStatusDto, JobSummary, QueueDetail, QueueStateDto,
     QueueSummary,
 };
+
+/// Overview tab value (also the tab when `?tab=` is missing or unknown).
+const TAB_OVERVIEW: &str = "overview";
+/// Access tab value (`?tab=access`).
+const TAB_ACCESS: &str = "access";
+
+/// The tab named by a `?tab=` value.
+fn tab_from_query(raw: Option<&str>) -> &'static str {
+    match raw {
+        Some(TAB_ACCESS) => TAB_ACCESS,
+        _ => TAB_OVERVIEW,
+    }
+}
+
+/// Queue page href for a tab (Overview has no query).
+fn tab_href(queue: &str, tab: &str) -> String {
+    let base = boson_backend::boson_queue_path(queue);
+    if tab == TAB_OVERVIEW {
+        base
+    } else {
+        format!("{base}?tab={tab}")
+    }
+}
+
+/// The Overview and Access tabs.
+#[component]
+fn QueueTabs(
+    /// Selected tab value.
+    selected_tab: RwSignal<String>,
+) -> impl IntoView {
+    view! {
+        <div data-testid="queue-detail-tabs">
+            <TabList selected_value=selected_tab>
+                <Tab value=TAB_OVERVIEW>"Overview"</Tab>
+                <Tab value=TAB_ACCESS>"Access"</Tab>
+            </TabList>
+        </div>
+    }
+}
+
+/// The shared Access card for one queue.
+#[component]
+fn QueueAccessTab(
+    /// Queue name.
+    name: String,
+) -> impl IntoView {
+    let resource = queue_ref(&name).label(name);
+    view! {
+        <div data-testid="queue-detail-access">
+            <AccessCard resource=resource />
+        </div>
+    }
+}
 
 const fn status_key(status: JobStatusDto) -> &'static str {
     match status {
@@ -130,10 +187,15 @@ fn paused_sentence(summary: &QueueSummary) -> String {
     )
 }
 
+/// Header, tabs and the selected tab for a loaded queue.
+///
+/// Pause and Resume show only with Edit on the queue, Purge only with Delete.
 #[component]
 fn QueueOverview(
     /// Loaded detail.
     detail: QueueDetail,
+    /// Selected tab value.
+    selected_tab: RwSignal<String>,
     /// True while pause, resume or purge is in flight.
     busy: ReadSignal<bool>,
     /// Pause when running, resume when paused.
@@ -142,6 +204,8 @@ fn QueueOverview(
     on_purge: Callback<()>,
 ) -> impl IntoView {
     let summary = detail.summary;
+    let can_edit = detail.can_edit;
+    let can_delete = detail.can_delete;
     let paused = summary.state == QueueStateDto::Paused;
     let name = summary.name.clone();
     let jobs = RwSignal::new(job_rows(&detail.jobs));
@@ -174,38 +238,73 @@ fn QueueOverview(
                     <Caption1>{owner}</Caption1>
                 </Flex>
                 <Flex gap=SpacingSize::Size80.flex_gap()>
-                    <div data-testid="queue-pause-toggle">
-                        <Button
-                            appearance=pause_appearance
-                            disabled=Signal::derive(move || busy.get())
-                            on:click=move |_| on_toggle_pause.run(!paused)
-                        >
-                            {pause_label}
-                        </Button>
-                    </div>
-                    <div data-testid="queue-purge-open">
-                        <Button
-                            appearance=ButtonAppearance::Danger
-                            disabled=Signal::derive(move || busy.get())
-                            on:click=move |_| on_purge.run(())
-                        >
-                            "Purge waiting jobs"
-                        </Button>
-                    </div>
+                    {can_edit.then(|| view! {
+                        <div data-testid="queue-pause-toggle">
+                            <Button
+                                appearance=pause_appearance
+                                disabled=Signal::derive(move || busy.get())
+                                on:click=move |_| on_toggle_pause.run(!paused)
+                            >
+                                {pause_label}
+                            </Button>
+                        </div>
+                    })}
+                    {can_delete.then(|| view! {
+                        <div data-testid="queue-purge-open">
+                            <Button
+                                appearance=ButtonAppearance::Danger
+                                disabled=Signal::derive(move || busy.get())
+                                on:click=move |_| on_purge.run(())
+                            >
+                                "Purge waiting jobs"
+                            </Button>
+                        </div>
+                    })}
                 </Flex>
             </Flex>
 
-            <TabList selected_value=RwSignal::new("overview".to_string())>
-                <Tab value="overview">"Overview"</Tab>
-            </TabList>
+            <QueueTabs selected_tab=selected_tab />
 
+            {move || if selected_tab.get() == TAB_ACCESS {
+                view! { <QueueAccessTab name=name.clone() /> }.into_any()
+            } else {
+                view! {
+                    <QueueOverviewBody
+                        summary=summary.clone()
+                        paused_bar=paused_bar.clone()
+                        jobs=jobs
+                        all_jobs_href=all_jobs_href.clone()
+                        all_jobs_label=all_jobs_label.clone()
+                    />
+                }.into_any()
+            }}
+        </Flex>
+    }
+}
+
+/// Overview tab: the paused note, the numbers and what's waiting and running.
+#[component]
+fn QueueOverviewBody(
+    /// Numbers to show.
+    summary: QueueSummary,
+    /// The paused sentence, when the queue is paused.
+    paused_bar: Option<String>,
+    /// Waiting and running job rows.
+    jobs: RwSignal<Vec<DataTableRowModel>>,
+    /// Link to every job of this queue.
+    all_jobs_href: String,
+    /// Text of that link.
+    all_jobs_label: String,
+) -> impl IntoView {
+    view! {
+        <Flex vertical=true gap=SpacingSize::Size240.flex_gap()>
             {paused_bar.map(|text| view! {
                 <div data-testid="queue-paused-bar">
                     <MessageBar intent=MessageBarIntent::Warning>{text}</MessageBar>
                 </div>
             })}
 
-            <QueueStats summary=summary.clone() />
+            <QueueStats summary=summary />
 
             <Card>
                 <BosonHelpCardHeader title="Waiting and running" />
@@ -256,11 +355,78 @@ fn QueueOverviewSkeleton() -> impl IntoView {
     }
 }
 
-/// `/boson/queues/:name`: one queue's numbers, what's waiting and running, and the actions.
+/// The queue's name and tabs with the denied state in place of the numbers and jobs, for a
+/// reader without View. The Access tab still shows who has access, read only.
+#[component]
+fn QueueDenied(
+    /// Queue name.
+    name: String,
+    /// The missing action the server named.
+    action: String,
+    /// Selected tab value.
+    selected_tab: RwSignal<String>,
+) -> impl IntoView {
+    let resource = queue_ref(&name).label(name.clone());
+    let title = name.clone();
+    view! {
+        <Flex vertical=true gap=SpacingSize::Size240.flex_gap()>
+            <Title3>{title}</Title3>
+            <QueueTabs selected_tab=selected_tab />
+            {move || if selected_tab.get() == TAB_ACCESS {
+                view! { <QueueAccessTab name=name.clone() /> }.into_any()
+            } else {
+                view! {
+                    <div data-testid="queue-detail-denied">
+                        <AccessDenied
+                            resource=resource.clone()
+                            action=action.clone()
+                            purpose="see what's waiting and running"
+                        />
+                    </div>
+                }.into_any()
+            }}
+        </Flex>
+    }
+}
+
+/// The selected tab, kept in step with `?tab=` both ways: back and forward move the tab, and a
+/// tab click writes the URL without scrolling or adding history.
+fn use_queue_tab(name: Memo<String>) -> RwSignal<String> {
+    let query = use_query_map();
+    let navigate = use_navigate();
+    let tab_in_url = Memo::new(move |_| tab_from_query(query.read().get("tab").as_deref()));
+    let selected_tab = RwSignal::new(tab_in_url.get_untracked().to_string());
+    // Back/forward changes the URL: follow it.
+    Effect::new(move |_| {
+        let tab = tab_in_url.get();
+        if selected_tab.get_untracked() != tab {
+            selected_tab.set(tab.to_string());
+        }
+    });
+    // A tab click: write `?tab=` without scrolling or adding history.
+    Effect::new(move |_| {
+        let tab = selected_tab.get();
+        if tab != tab_in_url.get_untracked() {
+            navigate(
+                &tab_href(&name.get_untracked(), &tab),
+                NavigateOptions {
+                    replace: true,
+                    scroll: false,
+                    ..Default::default()
+                },
+            );
+        }
+    });
+    selected_tab
+}
+
+/// `/boson/queues/:name`: one queue's numbers, what's waiting and running, and the actions,
+/// with an Access tab. Switching tabs changes `?tab=` without reloading the page.
 #[component]
 pub fn BosonQueueDetailPage() -> impl IntoView {
     let params = use_params_map();
     let name = Memo::new(move |_| params.read().get("name").unwrap_or_default());
+    let selected_tab = use_queue_tab(name);
     let refresh = RwSignal::new(0u32);
     let detail_res = Resource::new(
         move || (name.get(), refresh.get()),
@@ -318,6 +484,7 @@ pub fn BosonQueueDetailPage() -> impl IntoView {
                             view! {
                                 <QueueOverview
                                     detail=detail
+                                    selected_tab=selected_tab
                                     busy=busy.read_only()
                                     on_toggle_pause=on_toggle_pause
                                     on_purge=Callback::new(move |()| purge_open.set(true))
@@ -325,11 +492,16 @@ pub fn BosonQueueDetailPage() -> impl IntoView {
                                 <PurgeDialog open=purge_open summary=summary on_purged=on_purged />
                             }.into_any()
                         }
-                        Err(e) => view! {
-                            <MessageBar intent=MessageBarIntent::Error>
-                                <Body1>{format!("Couldn't load this queue. {e}")}</Body1>
-                            </MessageBar>
-                        }.into_any(),
+                        Err(e) => match denied_resource(&e.to_string()) {
+                            Some((_, action)) => view! {
+                                <QueueDenied name=name.get_untracked() action=action selected_tab=selected_tab />
+                            }.into_any(),
+                            None => view! {
+                                <MessageBar intent=MessageBarIntent::Error>
+                                    <Body1>{format!("Couldn't load this queue. {e}")}</Body1>
+                                </MessageBar>
+                            }.into_any(),
+                        },
                     })}
                 </Transition>
             </Flex>

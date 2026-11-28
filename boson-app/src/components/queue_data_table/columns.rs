@@ -10,7 +10,7 @@ use orbital_data::DataRecord;
 use crate::components::{pool_help, short_id_link, BosonHelpColumnHeader, JobStatusBadge};
 use crate::server::JobStatusDto;
 
-use super::mapper::job_status_from_key;
+use super::mapper::{job_status_from_key, CAN_RUN_FIELD};
 
 /// Columns the Active and Finished tables show; the skeleton rows match this count.
 pub const JOBS_TABLE_COLUMNS: usize = 7;
@@ -98,7 +98,9 @@ pub fn queue_table_columns(
     let cancel_view = Arc::new(move |record: DataRecord| {
         let job_id = text(&record, "job_id");
         let status = job_status_from_key(&text(&record, "status"));
-        let can_cancel = status == JobStatusDto::Queued || status == JobStatusDto::Running;
+        // Cancel needs Run on the job's task type.
+        let can_cancel = (status == JobStatusDto::Queued || status == JobStatusDto::Running)
+            && !text(&record, CAN_RUN_FIELD).is_empty();
 
         if !can_cancel {
             return ().into_any();
@@ -157,6 +159,10 @@ pub fn failed_table_columns(
     on_drop: Callback<String>,
 ) -> Vec<DataTableColumnDef> {
     let actions_view = Arc::new(move |record: DataRecord| {
+        // Retry and Drop need Run on the job's task type.
+        if text(&record, CAN_RUN_FIELD).is_empty() {
+            return ().into_any();
+        }
         let job_id = text(&record, "job_id");
         let retry_id = job_id.clone();
         let drop_id = job_id.clone();

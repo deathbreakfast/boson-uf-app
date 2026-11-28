@@ -50,6 +50,7 @@ pub fn TasksDataTable() -> impl IntoView {
                         "queue".into(),
                         "jobs_queued".into(),
                         "success_rate".into(),
+                        "access".into(),
                     ])
                 columns=tasks_table_columns()
                 sortable=false

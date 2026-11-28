@@ -26,6 +26,7 @@ fn sample_task(name: &str) -> TaskSummary {
         runs_total: 0,
         success_rate_pct: None,
         owner: None,
+        access: String::new(),
     }
 }
 

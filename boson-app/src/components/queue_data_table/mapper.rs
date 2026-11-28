@@ -18,6 +18,9 @@ pub fn format_clock(iso: &str) -> String {
     }
 }
 
+/// Record field that is `"yes"` when the reader holds Run on the job's task type.
+pub const CAN_RUN_FIELD: &str = "can_run";
+
 pub fn job_to_record(job: &JobSummary) -> DataRecord {
     DataRecord::new(
         job.job_id.clone(),
@@ -49,6 +52,10 @@ pub fn job_to_record(job: &JobSummary) -> DataRecord {
                         .as_deref()
                         .map_or_else(String::new, format_clock),
                 ),
+            ),
+            (
+                CAN_RUN_FIELD.into(),
+                DataValue::Text(if job.can_run { "yes" } else { "" }.into()),
             ),
         ]),
     )

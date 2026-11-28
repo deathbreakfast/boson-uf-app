@@ -142,6 +142,7 @@ pub fn job_to_summary(j: Job) -> JobSummary {
         max_attempts: None,
         last_error: None,
         failed_at: None,
+        can_run: false,
     }
 }
 
@@ -237,6 +238,7 @@ pub fn task_summary_from_parts(
         runs_total: stats.runs_total,
         success_rate_pct: success_rate_pct(stats.runs_total, stats.success_count),
         owner: None,
+        access: String::new(),
     }
 }
 

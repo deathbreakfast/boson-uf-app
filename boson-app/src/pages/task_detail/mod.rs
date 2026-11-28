@@ -10,12 +10,17 @@ use orbital::components::{
 };
 use orbital::primitives::{
     Body1, Breadcrumb, BreadcrumbButton, BreadcrumbDivider, BreadcrumbItem, CardHeader,
-    CardHeaderAction, Flex, FlexAlign, Link, MessageBar, MessageBarIntent, Tab, TabList, Table,
-    TableBody, TableCell, TableCellLayout, TableHeader, TableHeaderCell, TableRow,
+    CardHeaderAction, Flex, FlexAlign, Link, Tab, TabList, Table, TableBody, TableCell,
+    TableCellLayout, TableHeader, TableHeaderCell, TableRow,
 };
 
-use crate::components::{BosonBackLink, BosonCardContent, RunStatusBadge};
+use uf_product::access::{AccessCard, AccessDenied};
+
+use crate::components::{
+    server_fn_error_or_denied, BosonBackLink, BosonCardContent, RunStatusBadge,
+};
 use crate::pages::task_config::BosonTaskConfigPage;
+use crate::permissions::task_type_ref;
 use crate::server::{get_task_detail, TaskArgumentRow, TaskDetail};
 
 use skeleton::TaskDetailSkeleton;
@@ -161,11 +166,27 @@ fn RecentRunsCard(
 }
 
 /// Overview tab: stats, the settings sentence, arguments and recent runs.
+///
+/// Without View the stats and runs give way to the shared denied state with Request access;
+/// the arguments (declared in code) stay.
 #[component]
 fn OverviewTab(
     /// Loaded task detail.
     detail: TaskDetail,
 ) -> impl IntoView {
+    if !detail.can_view {
+        let resource = task_type_ref(&detail.summary.name).label(detail.summary.name.clone());
+        let arguments = detail.arguments;
+        return view! {
+            <Flex vertical=true gap=SpacingSize::Size160.flex_gap()>
+                <div data-testid="task-detail-denied">
+                    <AccessDenied resource=resource action="View" purpose="see its jobs, runs and errors" />
+                </div>
+                <ArgumentsCard arguments=arguments />
+            </Flex>
+        }
+        .into_any();
+    }
     let waiting = detail.waiting.to_string();
     let runs_24h = detail.runs_24h.to_string();
     let success = detail
@@ -192,6 +213,7 @@ fn OverviewTab(
             <RecentRunsCard detail=detail />
         </Flex>
     }
+    .into_any()
 }
 
 /// Header, tabs and the selected tab for a loaded task type.
@@ -215,7 +237,9 @@ fn TaskDetailBody(
     let waiting_href = boson_backend::boson_task_waiting_jobs_path(&name);
     let failed_href = boson_backend::boson_task_failed_runs_path(&name);
     let waiting_label = format!("{} waiting", detail.waiting);
+    let can_view = detail.can_view;
     let can_edit = detail.can_edit;
+    let resource = task_type_ref(&name).label(name.clone());
     let default_priority = detail.summary.default_priority;
     let task_name = Signal::stored(name.clone());
     let detail = StoredValue::new(detail);
@@ -227,14 +251,16 @@ fn TaskDetailBody(
                 <div data-testid="task-detail-owner">
                     <Caption1>{header_line}</Caption1>
                 </div>
-                <Flex align=FlexAlign::Center gap=SpacingSize::Size160.flex_gap()>
-                    <span data-testid="task-detail-waiting">
-                        <Link href=waiting_href>{waiting_label}</Link>
-                    </span>
-                    <span data-testid="task-detail-failed-runs">
-                        <Link href=failed_href>"Failed runs"</Link>
-                    </span>
-                </Flex>
+                {can_view.then(|| view! {
+                    <Flex align=FlexAlign::Center gap=SpacingSize::Size160.flex_gap()>
+                        <span data-testid="task-detail-waiting">
+                            <Link href=waiting_href>{waiting_label}</Link>
+                        </span>
+                        <span data-testid="task-detail-failed-runs">
+                            <Link href=failed_href>"Failed runs"</Link>
+                        </span>
+                    </Flex>
+                })}
             </Flex>
             <div data-testid="task-detail-tabs">
                 <TabList selected_value=selected_tab>
@@ -254,13 +280,9 @@ fn TaskDetailBody(
                     .into_any()
                 } else if tab == TAB_ACCESS {
                     view! {
-                        <Card>
-                            <BosonCardContent>
-                                <div data-testid="task-detail-access">
-                                    <Body1>"Who can see and change this task type will show here."</Body1>
-                                </div>
-                            </BosonCardContent>
-                        </Card>
+                        <div data-testid="task-detail-access">
+                            <AccessCard resource=resource.clone() />
+                        </div>
                     }
                     .into_any()
                 } else {
@@ -273,6 +295,9 @@ fn TaskDetailBody(
 
 /// Task type page: breadcrumb, owner, links to its waiting jobs and failed runs, and the
 /// Overview, Settings and Access tabs. Switching tabs changes `?tab=` without reloading the page.
+///
+/// Settings shows only with Edit on the task type. Access mounts the shared Access card: owners
+/// change roles there, everyone else sees who has access, read only.
 #[component]
 pub fn BosonTaskDetailPage() -> impl IntoView {
     let params = use_params_map();
@@ -357,9 +382,7 @@ pub fn BosonTaskDetailPage() -> impl IntoView {
                                 </Card>
                             }.into_any()
                         }
-                        Some(Err(e)) => view! {
-                            <MessageBar intent=MessageBarIntent::Error>{e.to_string()}</MessageBar>
-                        }.into_any(),
+                        Some(Err(e)) => server_fn_error_or_denied(&e, "see this task type"),
                         None => view! { <TaskDetailSkeleton /> }.into_any(),
                     }}
                 </Suspense>

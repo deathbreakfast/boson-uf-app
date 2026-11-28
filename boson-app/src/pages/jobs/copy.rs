@@ -232,6 +232,7 @@ mod tests {
             max_attempts: Some(3),
             last_error: error.map(str::to_string),
             failed_at: None,
+            can_run: true,
         }
     }
 

@@ -87,6 +87,10 @@ pub struct QueueSummary {
     pub paused_by: Option<String>,
     /// When the queue was paused, when it is paused.
     pub paused_at: Option<DateTime<Utc>>,
+    /// The reader's role on the queue ("Owner", "Can edit", "No access"), empty when the
+    /// endpoint doesn't check it. Rows with "No access" carry no numbers.
+    #[serde(default)]
+    pub access: String,
 }
 
 /// Queue detail page payload: the summary row plus what is waiting and running.
@@ -96,6 +100,12 @@ pub struct QueueDetail {
     pub summary: QueueSummary,
     /// Waiting and running jobs, oldest first, capped at [`QUEUE_DETAIL_JOBS_CAP`].
     pub jobs: Vec<JobSummary>,
+    /// Whether the reader holds Edit (pause and resume).
+    #[serde(default)]
+    pub can_edit: bool,
+    /// Whether the reader holds Delete (purge).
+    #[serde(default)]
+    pub can_delete: bool,
 }
 
 /// Badge on a Needs attention line.
@@ -206,6 +216,7 @@ pub fn queue_summary(stats: &PoolStats, pause: Option<&PoolState>) -> QueueSumma
         added_last_hour: stats.added_in_window,
         paused_by: paused.and_then(|p| p.changed_by.clone()),
         paused_at: paused.map(|p| p.changed_at),
+        access: String::new(),
     }
 }
 

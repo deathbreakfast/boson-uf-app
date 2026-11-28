@@ -6,6 +6,10 @@
 //! `count_runs_matching` as the total. A request past the first page whose cursor doesn't fit
 //! the query walks forward to its offset by keyset, then hands out cursors again.
 //! `list_runs_page` pages by offset.
+//!
+//! Access is per task type, as the session actor. The lists show every run but leave out the
+//! error text of task types the reader can't View; a list filtered to one task type, and the
+//! run page, need View on it.
 
 use leptos::prelude::*;
 use orbital_paging::{Page, PageRequest};
@@ -16,8 +20,20 @@ use super::helpers::{require_session, run_to_summary, trace_server_result};
 use super::types::{clamp_page_list_limit, MAX_PAGE_LIST_LIMIT};
 use super::types::{RunDetail, RunSummary};
 
+/// Blank the error text on runs of task types the reader can't View (it can hold URLs,
+/// account details or personal data).
+#[cfg(feature = "ssr")]
+async fn hide_run_errors(items: &mut [RunSummary]) {
+    let mut access = super::access::ReaderAccess::from_context();
+    for run in items {
+        if !access.task_type(&run.task_name, "View").await {
+            run.error_message = None;
+        }
+    }
+}
+
 /// Paginated runs endpoint.
-#[uf_product_macros::server(permission = "BosonAdmin")]
+#[uf_product_macros::server]
 pub async fn list_runs_page(
     /// Zero-based index of the first run to return.
     offset: u32,
@@ -45,7 +61,8 @@ pub async fn list_runs_page(
             )
             .await;
 
-        let dtos: Vec<RunSummary> = runs.into_iter().map(run_to_summary).collect();
+        let mut dtos: Vec<RunSummary> = runs.into_iter().map(run_to_summary).collect();
+        hide_run_errors(&mut dtos).await;
 
         let total_count: Option<u64> = if offset == 0 {
             Some(backend.count_runs(job_id_filter.as_deref()).await)
@@ -90,7 +107,7 @@ async fn run_key_at_offset(
 /// Filter rules (`status`, `task_name`, `from`, `to`) and the quick search become a
 /// [`boson_core::RunFilter`] ([`boson_backend::run_filter_from_request`]). The search matches a
 /// run id or its last characters; a whole job id instead lists that job's runs.
-#[uf_product_macros::server(permission = "BosonAdmin")]
+#[uf_product_macros::server]
 pub async fn list_runs_datatable_page(
     /// `DataTable` paging/filter/search/sort request from the client.
     request: PageRequest,
@@ -109,6 +126,9 @@ pub async fn list_runs_datatable_page(
         if let Some(ref job_id) = filter.job_id {
             boson_backend::validate_job_id(job_id)
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
+        }
+        if let Some(task) = filter.task.as_deref() {
+            super::access::require_task_type(task, "View").await?;
         }
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
@@ -149,6 +169,7 @@ pub async fn list_runs_datatable_page(
             (r.task_name.as_str(), &mut r.max_attempts)
         })
         .await;
+        hide_run_errors(&mut page.items).await;
         Ok(page)
     }
     .await;
@@ -158,7 +179,7 @@ pub async fn list_runs_datatable_page(
 }
 
 /// Registered task names, sorted, for the Runs task filter.
-#[uf_product_macros::server(permission = "BosonAdmin")]
+#[uf_product_macros::server]
 pub async fn list_task_names() -> Result<Vec<String>, ServerFnError> {
     let result = async {
         let ctx = higgs::Higgs::from_request().await?;
@@ -178,8 +199,8 @@ pub async fn list_task_names() -> Result<Vec<String>, ServerFnError> {
     result
 }
 
-/// Get a single run by id.
-#[uf_product_macros::server(permission = "BosonAdmin")]
+/// Get a single run by id. Needs View on the run's task type.
+#[uf_product_macros::server]
 pub async fn get_run(
     /// Unique identifier of the run to look up.
     run_id: String,
@@ -191,7 +212,11 @@ pub async fn get_run(
         require_session(&ctx)?;
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
-        Ok(backend.get_run(&run_id).await.map(run_to_summary))
+        let Some(run) = backend.get_run(&run_id).await else {
+            return Ok(None);
+        };
+        super::access::require_task_type(&run.task_name, "View").await?;
+        Ok(Some(run_to_summary(run)))
     }
     .await;
     #[cfg(feature = "ssr")]
@@ -204,7 +229,9 @@ pub async fn get_run(
 const MAX_ATTEMPTS_LISTED: usize = 100;
 
 /// A run with its job, every attempt of that job and the task's attempt budget.
-#[uf_product_macros::server(permission = "BosonAdmin")]
+///
+/// Needs View on the run's task type. An unknown id returns `None` before the check.
+#[uf_product_macros::server]
 pub async fn get_run_detail(
     /// Unique identifier of the run to look up.
     run_id: String,
@@ -219,6 +246,7 @@ pub async fn get_run_detail(
         let Some(run) = backend.get_run(&run_id).await else {
             return Ok(None);
         };
+        super::access::require_task_type(&run.task_name, "View").await?;
         let job = backend
             .get_job(&run.job_id)
             .await
@@ -242,7 +270,9 @@ pub async fn get_run_detail(
                 .cmp(&b.attempt)
                 .then(a.started_at.cmp(&b.started_at))
         });
-        let can_edit = super::helpers::can_edit_task_type(&run.task_name).await;
+        let can_run = super::access::ReaderAccess::from_context()
+            .task_type(&run.task_name, "Run")
+            .await;
         let running_for_ms = (run.status == boson_core::RunStatus::Running).then(|| {
             (chrono::Utc::now() - run.started_at)
                 .num_milliseconds()
@@ -254,7 +284,7 @@ pub async fn get_run_detail(
             max_attempts,
             attempts: attempts.into_iter().map(run_to_summary).collect(),
             running_for_ms,
-            can_edit,
+            can_run,
         }))
     }
     .await;

@@ -3,6 +3,7 @@
 //! Pages under [`crate::pages`] compose these with Orbital layouts. Prefer crate-root
 //! rustdoc for operator workflows; this module is the inventory of reusable pieces.
 
+mod access;
 mod back_link;
 mod card_surface;
 mod data_table_loading;
@@ -19,6 +20,7 @@ mod table_link;
 mod task_summary_panel;
 mod tasks_data_table;
 
+pub use access::{server_fn_error_or_denied, AccessBadge};
 pub use back_link::BosonBackLink;
 pub use card_surface::{boson_table_page_layout, BosonCardContent, BosonDataTableShell};
 // Re-export layout class bundle for hosts / pages that type the return of

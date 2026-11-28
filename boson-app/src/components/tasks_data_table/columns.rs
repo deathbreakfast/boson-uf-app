@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use orbital::primitives::{DataTableColumnDef, Link};
 use orbital_data::DataRecord;
 
-use crate::components::{success_rate_help, BosonHelpColumnHeader};
+use crate::components::{success_rate_help, AccessBadge, BosonHelpColumnHeader};
 
 use super::mapper::record_to_task_name;
 
@@ -19,6 +19,13 @@ pub fn tasks_table_columns() -> Vec<DataTableColumnDef> {
             </div>
         }
         .into_any()
+    });
+
+    let access_view = Arc::new(|record: DataRecord| {
+        let access = record
+            .get("access")
+            .map_or_else(String::new, orbital_data::DataValue::display_string);
+        view! { <AccessBadge access=access /> }.into_any()
     });
 
     let success_header = Arc::new(|| {
@@ -39,5 +46,8 @@ pub fn tasks_table_columns() -> Vec<DataTableColumnDef> {
         DataTableColumnDef::new("success_rate", "Success rate")
             .with_sortable(false)
             .with_header_view(success_header),
+        DataTableColumnDef::new("access", "Your access")
+            .with_sortable(false)
+            .with_cell_view(access_view),
     ]
 }

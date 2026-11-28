@@ -19,9 +19,10 @@ use orbital::primitives::{
 };
 
 use crate::components::{
-    no_toolbar, row_model, text_cell, BosonCardContent, BosonDataTableRefetchSkeleton,
+    no_toolbar, row_model, text_cell, AccessBadge, BosonCardContent, BosonDataTableRefetchSkeleton,
 };
 use crate::live::use_boson_poll_tick;
+use crate::permissions::NO_ACCESS;
 use crate::server::{list_queues, QueueStateDto, QueueSummary};
 
 /// Badge for a queue's state: Falling behind (warning), Keeping up (success), Paused.
@@ -64,9 +65,15 @@ fn columns() -> Vec<DataTableColumnDef> {
         view! { <Link href=href attr:data-testid=testid>{name}</Link> }.into_any()
     });
     let state_view = Arc::new(|record: DataRecord| {
+        if text_cell(&record, "access") == NO_ACCESS {
+            return ().into_any();
+        }
         let state = state_from_key(&text_cell(&record, "state"));
         let testid = format!("queue-state-{}", text_cell(&record, "name"));
         view! { <span data-testid=testid><QueueStateBadge state=state /></span> }.into_any()
+    });
+    let access_view = Arc::new(|record: DataRecord| {
+        view! { <AccessBadge access=text_cell(&record, "access") /> }.into_any()
     });
     vec![
         DataTableColumnDef::new("name", "Queue")
@@ -81,28 +88,39 @@ fn columns() -> Vec<DataTableColumnDef> {
         DataTableColumnDef::new("oldest", "Oldest waiting").with_sortable(false),
         DataTableColumnDef::new("done", "Done last hour").with_sortable(false),
         DataTableColumnDef::new("added", "Added last hour").with_sortable(false),
+        DataTableColumnDef::new("access", "Your access")
+            .with_sortable(false)
+            .with_cell_view(access_view),
     ]
 }
 
+/// Queues rows. A queue the reader can't View shows its name, owner and a "No access" tag,
+/// with the state and number cells left blank.
 fn rows(queues: &[QueueSummary]) -> Vec<DataTableRowModel> {
     let now = chrono::Utc::now();
     queues
         .iter()
         .map(|q| {
+            let numbers = q.access != NO_ACCESS;
+            let number = |text: String| if numbers { text } else { String::new() };
             row_model(
                 &q.name,
                 &[
                     ("name", q.name.clone()),
                     ("owner", q.owner.clone()),
                     ("state", state_key(q.state).to_string()),
-                    ("waiting", q.waiting.to_string()),
-                    ("running", q.running.to_string()),
+                    ("waiting", number(q.waiting.to_string())),
+                    ("running", number(q.running.to_string())),
                     (
                         "oldest",
-                        boson_backend::oldest_waiting_label(q.oldest_waiting_at, now),
+                        number(boson_backend::oldest_waiting_label(
+                            q.oldest_waiting_at,
+                            now,
+                        )),
                     ),
-                    ("done", q.done_last_hour.to_string()),
-                    ("added", q.added_last_hour.to_string()),
+                    ("done", number(q.done_last_hour.to_string())),
+                    ("added", number(q.added_last_hour.to_string())),
+                    ("access", q.access.clone()),
                 ],
             )
         })

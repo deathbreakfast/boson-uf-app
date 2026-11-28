@@ -2,6 +2,10 @@
 //!
 //! Tasks come from the in-process registry, so `get_tasks_page` and `get_tasks_datatable_page`
 //! load every task summary and page by offset; they return no cursor.
+//!
+//! Access is per task type, as the session actor: the lists show every task type with the
+//! reader's role and no numbers where the reader can't View; the detail needs View for its
+//! numbers and runs, the settings need Edit.
 
 use leptos::prelude::*;
 use orbital_paging::{Page, PageRequest};
@@ -22,7 +26,11 @@ pub async fn get_tasks() -> Result<Vec<TaskSummary>, ServerFnError> {
         let ctx = higgs::Higgs::from_request().await?;
         require_session(&ctx)?;
         let backend = super::helpers::boson_backend()?;
-        load_all_task_summaries(backend.as_ref()).await
+        let mut tasks = load_all_task_summaries(backend.as_ref()).await?;
+        super::access::ReaderAccess::from_context()
+            .label_tasks(&mut tasks)
+            .await;
+        Ok(tasks)
     }
     .await;
     #[cfg(feature = "ssr")]
@@ -47,7 +55,11 @@ pub async fn get_task(
         let Some(desc) = backend.registry().get(&task_name) else {
             return Ok(None);
         };
-        Ok(Some(build_task_summary(backend, desc).await?))
+        let mut task = build_task_summary(backend, desc).await?;
+        super::access::ReaderAccess::from_context()
+            .label_tasks(std::slice::from_mut(&mut task))
+            .await;
+        Ok(Some(task))
     }
     .await;
     #[cfg(feature = "ssr")]
@@ -60,6 +72,10 @@ pub async fn get_task(
 const RECENT_RUNS: usize = 10;
 
 /// Everything the task type page shows. `None` when no task type has that name.
+///
+/// Without View on the task type the detail keeps what the code declares (name, queue, owner,
+/// description, arguments) and leaves out the numbers and runs, with `can_view` false, so the
+/// page can say what's missing and offer Request access.
 #[uf_product_macros::server]
 pub async fn get_task_detail(
     /// Registry name of the task to look up.
@@ -76,7 +92,28 @@ pub async fn get_task_detail(
         let Some(desc) = backend.registry().get(&task_name) else {
             return Ok(None);
         };
-        let summary = build_task_summary(backend, desc).await?;
+        let mut access = super::access::ReaderAccess::from_context();
+        let can_view = access.task_type(&task_name, "View").await;
+        let can_run = access.task_type(&task_name, "Run").await;
+        let can_edit = access.task_type(&task_name, "Edit").await;
+        let mut summary = build_task_summary(backend, desc).await?;
+        summary.access = access.task_type_label(&task_name).await.to_string();
+        if !can_view {
+            super::access::redact_task(&mut summary);
+            return Ok(Some(TaskDetail {
+                description: boson_backend::task_description_from_signature(desc.signature_json),
+                waiting: 0,
+                runs_24h: 0,
+                success_rate_24h_pct: None,
+                settings_sentence: String::new(),
+                arguments: boson_backend::task_arguments_from_signature(desc.signature_json),
+                recent_runs: Vec::new(),
+                can_view,
+                can_run,
+                can_edit,
+                summary,
+            }));
+        }
         let config = backend
             .get_task_config(&task_name)
             .await
@@ -109,9 +146,8 @@ pub async fn get_task_detail(
             success_rate_24h_pct: boson_backend::success_rate_pct(runs_24h, success_24h),
             settings_sentence: boson_backend::settings_sentence(&config),
             arguments: boson_backend::task_arguments_from_signature(desc.signature_json),
-            // Any signed-in user can open this page, but handler error text can hold URLs,
-            // account details or personal data and stays behind BosonAdmin (get_run), so the
-            // recent runs leave it out.
+            // Handler error text can hold URLs, account details or personal data, so the
+            // recent runs leave it out; the run page shows it.
             recent_runs: runs
                 .into_iter()
                 .map(|r| {
@@ -120,7 +156,9 @@ pub async fn get_task_detail(
                     summary
                 })
                 .collect(),
-            can_edit: super::helpers::can_edit_task_type(&task_name).await,
+            can_view,
+            can_run,
+            can_edit,
             summary,
         }))
     }
@@ -137,7 +175,9 @@ pub async fn get_task_detail(
 }
 
 /// How many jobs of the task are waiting or running now (what "Most at once" counts).
-#[uf_product_macros::server(permission = "BosonAdmin")]
+///
+/// Needs View on the task type.
+#[uf_product_macros::server]
 pub async fn get_task_active_jobs(
     /// Registry name of the task to count.
     task_name: String,
@@ -150,6 +190,7 @@ pub async fn get_task_active_jobs(
             .map_err(|e| ServerFnError::new(e.to_string()))?;
         let ctx = higgs::Higgs::from_request().await?;
         require_session(&ctx)?;
+        super::access::require_task_type(&task_name, "View").await?;
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
         let queued = backend
@@ -172,8 +213,8 @@ pub async fn get_task_active_jobs(
     result
 }
 
-/// Get task config.
-#[uf_product_macros::server(permission = "BosonAdmin")]
+/// Get task config. Needs Edit on the task type (it feeds the Settings form).
+#[uf_product_macros::server]
 pub async fn get_task_config(
     /// Registry name of the task whose config should be fetched.
     task_name: String,
@@ -185,6 +226,7 @@ pub async fn get_task_config(
         let ctx = higgs::Higgs::from_request().await?;
         require_session(&ctx)?;
         require_email_verified().await?;
+        super::access::require_task_type(&task_name, "Edit").await?;
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
         let config = backend
@@ -205,8 +247,8 @@ pub async fn get_task_config(
     result
 }
 
-/// Update task config.
-#[uf_product_macros::server(permission = "BosonAdmin")]
+/// Update task config. Needs Edit on the task type.
+#[uf_product_macros::server]
 pub async fn update_task_config(
     /// Registry name of the task whose config should be updated.
     task_name: String,
@@ -220,6 +262,7 @@ pub async fn update_task_config(
         let ctx = higgs::Higgs::from_request().await?;
         require_session(&ctx)?;
         require_email_verified().await?;
+        super::access::require_task_type(&task_name, "Edit").await?;
         boson_backend::validate_task_config_update(&req)
             .map_err(|e| ServerFnError::new(e.to_string()))?;
         let backend = super::helpers::boson_backend()?;
@@ -272,6 +315,9 @@ pub async fn get_tasks_page(
         let backend = super::helpers::boson_backend()?;
         let mut tasks = load_all_task_summaries(backend.as_ref()).await?;
         boson_backend::filter_tasks_by_query(&mut tasks, query.as_deref());
+        super::access::ReaderAccess::from_context()
+            .label_tasks(&mut tasks)
+            .await;
 
         let total_count: Option<u64> = if offset == 0 {
             Some(tasks.len() as u64)
@@ -309,6 +355,9 @@ pub async fn get_tasks_datatable_page(
             &mut tasks,
             super::page_query::quick_search_text(&request).as_deref(),
         );
+        super::access::ReaderAccess::from_context()
+            .label_tasks(&mut tasks)
+            .await;
 
         let total_count: Option<u64> = if request.offset == 0 {
             Some(tasks.len() as u64)
