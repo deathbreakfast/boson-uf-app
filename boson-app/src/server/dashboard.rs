@@ -138,8 +138,8 @@ pub async fn get_dashboard_stats() -> Result<DashboardStats, ServerFnError> {
 /// Needs attention lines, worst first: queues falling behind, failed jobs per task type, and
 /// task types failing more than usual. Empty means All clear.
 ///
-/// Requires `BosonAdmin`: the lines carry pool names and stats that [`super::list_queues`]
-/// keeps admin-only.
+/// Requires `BosonAdmin`: the lines summarize every queue and task type at once, so this
+/// app-wide panel stays with the app's admins. Per-resource numbers live on each page.
 #[uf_product_macros::server(permission = "BosonAdmin")]
 pub async fn get_needs_attention() -> Result<Vec<NeedsAttentionLine>, ServerFnError> {
     let result = async {
@@ -182,8 +182,8 @@ pub async fn get_needs_attention() -> Result<Vec<NeedsAttentionLine>, ServerFnEr
 
 /// Failing most: task types with the most failed runs in the last 24 hours.
 ///
-/// Requires `BosonAdmin`: rows carry each task type's most common run error, which can hold
-/// free-form text that run history keeps admin-only.
+/// Requires `BosonAdmin` (an app-wide panel), and lists only task types the reader can View:
+/// rows carry each type's most common run error, which can hold free-form text.
 #[uf_product_macros::server(permission = "BosonAdmin")]
 pub async fn get_failing_most() -> Result<Vec<FailingTaskRow>, ServerFnError> {
     let result = async {
@@ -191,7 +191,14 @@ pub async fn get_failing_most() -> Result<Vec<FailingTaskRow>, ServerFnError> {
         require_session(&ctx)?;
         let backend = super::helpers::boson_backend()?;
         let tasks = load_task_failure_stats(backend.as_ref(), chrono::Utc::now()).await?;
-        Ok(boson_backend::failing_most_rows(&tasks))
+        let mut access = super::access::ReaderAccess::from_context();
+        let mut rows = Vec::new();
+        for row in boson_backend::failing_most_rows(&tasks) {
+            if access.task_type(&row.task, "View").await {
+                rows.push(row);
+            }
+        }
+        Ok(rows)
     }
     .await;
     #[cfg(feature = "ssr")]

@@ -40,16 +40,6 @@ pub(super) fn offered_pools() -> Vec<boson_backend::GluonPoolPickRow> {
         .map_or_else(boson_backend::default_gluon_pool_rows, |p| p.pools())
 }
 
-/// Whether the session may edit a task type and act on its jobs (Settings tab, Retry job,
-/// Cancel job).
-///
-/// Today this is the `BosonAdmin` permission for every task type; this is the one place to
-/// swap in a per-task-type check.
-#[cfg(feature = "ssr")]
-pub(super) async fn can_edit_task_type(_task_name: &str) -> bool {
-    uf_product::permissions::has_permission(super::BOSON_ADMIN_PERMISSION).await
-}
-
 /// Display name for a user id from the host's [`boson_backend::BosonPeopleLookup`], if any.
 #[cfg(feature = "ssr")]
 pub(super) fn person_name(user_id: &str) -> Option<String> {

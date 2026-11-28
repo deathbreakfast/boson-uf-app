@@ -123,6 +123,9 @@ async fn seed_user(id: &str, email_verified: bool, valence: &Valence) {
 
 async fn seed_super_user_with_member(system: &Valence, member_user_id: &str) {
     let super_group = gauge::generated::PermissionGroup::new(
+        None,
+        None,
+        None,
         SUPER_USER_GROUP_NAME.to_string(),
         Some("super users".to_string()),
         Utc::now(),
@@ -213,17 +216,139 @@ fn boson_admin_manifest() -> PermissionManifestInput {
     }
 }
 
-async fn grant_boson_admin(admin_ctx: &Valence, user_id: &str) {
-    let perms = service::list_permissions(admin_ctx, None)
+/// Group that holds `BosonAdmin`; default owner of every task type and queue bundle.
+pub const BOSON_ADMINS_GROUP_ID: &str = "boson.admins";
+
+/// A team (mirrored the way Polaron mirrors teams) that holds Can run on [`E2E_TASK_NAME`].
+pub const E2E_TEAM_GROUP_ID: &str = "e2e_team_billing";
+
+/// Member of [`E2E_TEAM_GROUP_ID`]; holds nothing else.
+pub const E2E_RUNNER_USER: &str = "runner";
+
+/// A user with no access who asks for it in the request spec.
+pub const E2E_REQUESTER_USER: &str = "requester";
+
+/// The host's admin group: holds `BosonAdmin`, with `admin` as member and owner.
+async fn seed_boson_admins_group(system: &Valence) {
+    gauge::resource_permissions::ensure_group_granted_permission(
+        system,
+        BOSON_ADMINS_GROUP_ID,
+        "Boson admins",
+        "People who administer Boson",
+        "BosonAdmin",
+        &[],
+    )
+    .await
+    .expect("seed Boson admins group");
+    service::add_group_member_user(BOSON_ADMINS_GROUP_ID, "admin", system)
         .await
-        .expect("list permissions");
-    let boson_admin = perms
-        .into_iter()
-        .find(|p| p.name == "BosonAdmin")
-        .expect("BosonAdmin after sync");
-    service::grant_permission_to_user(&boson_admin.id, user_id, admin_ctx)
+        .expect("add admin to Boson admins");
+    // Gauge lets owners (not members) of the admin group manage each bundle's access.
+    service::add_group_owner_user(BOSON_ADMINS_GROUP_ID, "admin", system)
         .await
-        .expect("grant BosonAdmin");
+        .expect("make admin an owner of Boson admins");
+}
+
+/// Ensure the bundle for a queue the suite makes on the fly, as host boot would for a
+/// configured pool. Harness only: the seed endpoint runs as System from the start.
+pub async fn ensure_queue_bundle(pool: &str) -> anyhow::Result<()> {
+    boson_app::permissions::ensure_boson_resource_bundles(
+        &e2e_system_valence(),
+        std::iter::empty::<&str>(),
+        [pool],
+        BOSON_ADMINS_GROUP_ID,
+    )
+    .await?;
+    Ok(())
+}
+
+/// Bundles for every task type and pool (as host boot does, as System), then the team with
+/// [`E2E_RUNNER_USER`] in it and Can run on [`E2E_TASK_NAME`], granted by `owner` (a member
+/// of the admin group) the way an owner does it from the Access card.
+async fn seed_resource_access(system: &Valence, owner: &Valence, registry: &TaskRegistry) {
+    use boson_app::permissions::{ensure_boson_resource_bundles, BOSON_TASK_TYPE};
+    use gauge::resource_permissions::{roles::Role, set_principal_role};
+    use gauge::types::PrincipalKind;
+
+    let task_names: Vec<String> = registry.iter().map(|d| d.name.to_string()).collect();
+    ensure_boson_resource_bundles(
+        system,
+        &task_names,
+        ["global", E2E_POOL],
+        BOSON_ADMINS_GROUP_ID,
+    )
+    .await
+    .expect("ensure Boson resource bundles");
+
+    service::create_managed_group(
+        E2E_TEAM_GROUP_ID,
+        "Billing engineering",
+        "Team the end-to-end suite grants access to",
+        Some("admin"),
+        Some("polaron"),
+        Some("billing"),
+        system,
+    )
+    .await
+    .expect("create the e2e team group");
+    service::add_group_member_user(E2E_TEAM_GROUP_ID, E2E_RUNNER_USER, system)
+        .await
+        .expect("add runner to the team");
+    set_principal_role(
+        owner,
+        BOSON_TASK_TYPE,
+        E2E_TASK_NAME,
+        (PrincipalKind::Group, E2E_TEAM_GROUP_ID),
+        Role::Run,
+    )
+    .await
+    .expect("the team can run the e2e task type");
+}
+
+/// Approve every pending access request `admin` may review, the way an owner does it in
+/// Gauge's Requests page. Returns how many were approved.
+pub async fn approve_pending_requests() -> anyhow::Result<usize> {
+    use gauge::types::{PermissionRequestDecision, PermissionRequestDecisionInput};
+
+    let admin = e2e_system_valence().with_actor(Actor::User {
+        user_id: "admin".to_string(),
+    });
+    let pending = service::list_permission_requests_for_review(&admin).await?;
+    let count = pending.len();
+    for request in pending {
+        service::decide_permission_request(
+            PermissionRequestDecisionInput {
+                request_id: request.id,
+                decision: PermissionRequestDecision::Approve,
+            },
+            &admin,
+        )
+        .await?;
+    }
+    Ok(count)
+}
+
+/// Take back what [`E2E_REQUESTER_USER`] was given on [`E2E_SETTINGS_TASK_NAME`], so the
+/// request spec starts from no access on every attempt. Approves anything still pending
+/// first, so no stale request blocks a new one; runs as `admin`, an owner of the bundle.
+pub async fn reset_requester_access() -> anyhow::Result<()> {
+    use boson_app::permissions::BOSON_TASK_TYPE;
+    use gauge::resource_permissions::remove_principal;
+    use gauge::types::PrincipalKind;
+
+    approve_pending_requests().await?;
+    let admin = e2e_system_valence().with_actor(Actor::User {
+        user_id: "admin".to_string(),
+    });
+    // Nothing to remove the first time; that's fine.
+    let _ = remove_principal(
+        &admin,
+        BOSON_TASK_TYPE,
+        E2E_SETTINGS_TASK_NAME,
+        (PrincipalKind::User, E2E_REQUESTER_USER),
+    )
+    .await;
+    Ok(())
 }
 
 async fn bootstrap_boson_fixtures(
@@ -289,6 +414,8 @@ pub async fn init_e2e_valence() {
     seed_user("admin", true, &system).await;
     seed_user("outsider", true, &system).await;
     seed_user("unverified", false, &system).await;
+    seed_user(E2E_RUNNER_USER, true, &system).await;
+    seed_user(E2E_REQUESTER_USER, true, &system).await;
     seed_super_user_with_member(&system, "admin").await;
 
     sync_permission_manifests(&system, &[boson_admin_manifest()])
@@ -298,8 +425,13 @@ pub async fn init_e2e_valence() {
     let admin_ctx = system.with_actor(Actor::User {
         user_id: "admin".to_string(),
     });
-    grant_boson_admin(&admin_ctx, "admin").await;
-    grant_boson_admin(&admin_ctx, "unverified").await;
+    seed_boson_admins_group(&system).await;
+    // Holds Boson admin (and so every bundle) for the email-gate sad paths.
+    service::add_group_member_user(BOSON_ADMINS_GROUP_ID, "unverified", &system)
+        .await
+        .expect("add unverified to Boson admins");
+    let registry = e2e_task_registry();
+    seed_resource_access(&system, &admin_ctx, &registry).await;
     demote_admin_from_super_user(&system).await;
 
     let queue = Arc::new(MemQueueBackend::new());
@@ -310,7 +442,7 @@ pub async fn init_e2e_valence() {
         Boson::builder()
             .queue_backend_from_global()
             .execution_context_factory(JsonExecutionContextFactory)
-            .registry(std::sync::Arc::new(e2e_task_registry()))
+            .registry(std::sync::Arc::new(registry))
             .without_worker()
             .build_manual()
             .expect("e2e Boson")
@@ -653,6 +785,7 @@ pub const E2E_OPS_ERROR: &str = "Ledger API refused the token (401)";
 /// Upsert the jobs and runs an [`OpsSeed`] asks for, all for [`E2E_TASK_NAME`]. The e2e host
 /// runs no worker, so queued jobs stay queued.
 pub async fn seed_ops(seed: &OpsSeed) -> anyhow::Result<()> {
+    ensure_queue_bundle(&seed.pool).await?;
     let queue = e2e_queue();
     let statuses = std::iter::repeat_n(JobStatus::Queued, seed.queued)
         .chain(std::iter::repeat_n(JobStatus::Running, seed.running))

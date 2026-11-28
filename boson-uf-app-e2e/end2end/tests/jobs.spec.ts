@@ -4,7 +4,6 @@ import {
   seedAuth,
   shortId,
   waitForHydrated,
-  expectMutationDenied,
 } from "./fixtures";
 
 test.describe("pw-boson-jobs", () => {
@@ -56,14 +55,11 @@ test.describe("pw-boson-jobs", () => {
     await page.goto("/boson/jobs", { waitUntil: "domcontentloaded" });
     await waitForHydrated(page);
     await expect(page.getByTestId("boson-jobs")).toBeVisible({ timeout: 60_000 });
-    const cancel = page.getByTestId(`job-cancel-${seeded.fixtures.job_id}`);
-    await expect(cancel).toBeVisible({ timeout: 60_000 });
-    await cancel.locator("button").click();
-    await page.getByTestId("cancel-job-confirm").locator("button").click();
-    await expectMutationDenied(page);
-    // A denied cancel leaves the job and its Cancel button in place.
-    await expect(cancel).toBeVisible();
-    await expect(page.getByTestId("jobs-cancel-success")).toHaveCount(0);
+    // The job is listed, but without Run on its task type there is no Cancel.
+    await expect(page.getByText(shortId(seeded.fixtures.job_id)).first()).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByTestId(`job-cancel-${seeded.fixtures.job_id}`)).toHaveCount(0);
   });
 
   test("pw-boson-jobs-happy-tabs-keep-the-page", async ({ page }) => {

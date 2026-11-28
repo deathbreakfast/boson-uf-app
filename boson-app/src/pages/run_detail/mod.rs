@@ -20,7 +20,9 @@ use orbital::primitives::{
 };
 use orbital_motion::OrbitalPresence;
 
-use crate::components::{boson_error_reveal_motion, BosonCardContent, RunStatusBadge};
+use crate::components::{
+    boson_error_reveal_motion, server_fn_error_or_denied, BosonCardContent, RunStatusBadge,
+};
 use crate::live::{
     boson_job_run_subscription, boson_run_event_is_status, boson_run_event_matches_run,
     BosonJobRunLiveSource,
@@ -86,7 +88,7 @@ fn RunActions(
     let Some(job) = detail.job.clone() else {
         return ().into_any();
     };
-    if !detail.can_edit {
+    if !detail.can_run {
         return ().into_any();
     }
     let job_id = StoredValue::new(job.job_id.clone());
@@ -419,9 +421,7 @@ pub fn BosonRunDetailPage() -> impl IntoView {
                         Some(Ok(None)) => view! {
                             <MessageBar intent=MessageBarIntent::Warning>"Run not found"</MessageBar>
                         }.into_any(),
-                        Some(Err(e)) => view! {
-                            <MessageBar intent=MessageBarIntent::Error>{e.to_string()}</MessageBar>
-                        }.into_any(),
+                        Some(Err(e)) => server_fn_error_or_denied(&e, "see this run and its error"),
                         None => view! { <RunDetailSkeleton /> }.into_any(),
                     }}
                 </Suspense>

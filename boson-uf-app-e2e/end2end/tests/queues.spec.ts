@@ -100,8 +100,21 @@ test.describe("pw-boson-queues", () => {
     await page.goto("/boson/queues", { waitUntil: "domcontentloaded" });
     await waitForHydrated(page);
     await expect(page.getByTestId("boson-queues")).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText("Couldn't load queues.")).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByTestId(`queue-row-${pool}`)).toHaveCount(0);
+    // Every queue is listed so people can ask; this one says No access, with no numbers.
+    const link = page.getByTestId(`queue-row-${pool}`);
+    await expect(link).toBeVisible({ timeout: 60_000 });
+    const row = page.getByRole("row").filter({ has: link });
+    await expect(row.getByTestId("boson-your-access")).toHaveText("No access");
+    await expect(page.getByTestId(`queue-state-${pool}`)).toHaveCount(0);
+
+    await link.click();
+    await expect(page).toHaveURL(new RegExp(`/boson/queues/${pool}$`));
+    const denied = page.getByTestId("access-denied");
+    await expect(denied).toBeVisible({ timeout: 60_000 });
+    await expect(denied).toHaveAttribute("data-action", "View");
+    await expect(page.getByTestId("queue-purge-open")).toHaveCount(0);
+    await expect(page.getByTestId("queue-pause-toggle")).toHaveCount(0);
+    await expect(page.getByTestId("queue-jobs-table")).toHaveCount(0);
   });
 
   test("pw-boson-queues-sad-unknown-queue", async ({ page }) => {

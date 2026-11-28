@@ -1,6 +1,14 @@
 import { test as base, expect, type Page } from "@playwright/test";
 
-export type SeedAuthKind = "anonymous" | "admin" | "outsider" | "unverified";
+export type SeedAuthKind =
+  | "anonymous"
+  | "admin"
+  | "outsider"
+  | "unverified"
+  /** Member of the e2e team, which holds Can run on the e2e task type only. */
+  | "runner"
+  /** No access; asks for it in the request spec. */
+  | "requester";
 
 export type SeedFixtures = {
   task_name: string;
@@ -56,6 +64,10 @@ export async function seedAuth(
     failedJob?: boolean;
     atLimit?: boolean;
     ops?: OpsSeed;
+    /** Approve every pending access request as admin, as an owner would in Gauge. */
+    approveRequests?: boolean;
+    /** Take back the requester's access to the settings task type first. */
+    resetRequester?: boolean;
   },
 ) {
   const res = await page.request.post("/api/test/seed-data", {
@@ -68,12 +80,15 @@ export async function seedAuth(
       failed_job: opts?.failedJob ?? false,
       at_limit: opts?.atLimit ?? false,
       ops: opts?.ops ?? null,
+      approve_requests: opts?.approveRequests ?? false,
+      reset_requester: opts?.resetRequester ?? false,
     },
   });
   expect(res.ok()).toBeTruthy();
   return res.json() as Promise<{
     ok: boolean;
     auth: string;
+    approved: number;
     fixtures: SeedFixtures;
     failed: FailedSeed | null;
     runs: RunsSeed | null;

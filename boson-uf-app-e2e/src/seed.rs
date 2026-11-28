@@ -5,15 +5,16 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::e2e_valence::{
-    e2e_fixtures, refresh_queue_job, seed_failed_job, seed_failed_jobs, seed_filter_runs,
-    seed_limited_task, seed_ops, seed_paging_jobs, store_fixtures, OpsSeed, E2E_LIMITED_ACTIVE,
-    E2E_LIMITED_TASK_NAME, E2E_SETTINGS_TASK_NAME,
+    approve_pending_requests, e2e_fixtures, refresh_queue_job, reset_requester_access,
+    seed_failed_job, seed_failed_jobs, seed_filter_runs, seed_limited_task, seed_ops,
+    seed_paging_jobs, store_fixtures, OpsSeed, E2E_LIMITED_ACTIVE, E2E_LIMITED_TASK_NAME,
+    E2E_SETTINGS_TASK_NAME,
 };
 use crate::gate_demos::{write_e2e_auth_kind, E2eAuthKind};
 
 #[derive(Debug, Deserialize)]
 pub struct SeedRequest {
-    /// `anonymous` | `admin` | `outsider` | `unverified`
+    /// `anonymous` | `admin` | `outsider` | `unverified` | `runner` | `requester`
     #[serde(default = "default_auth")]
     pub auth: String,
     /// When true, enqueue a fresh queued job for cancel specs.
@@ -37,6 +38,13 @@ pub struct SeedRequest {
     /// When set, upsert jobs and runs into one pool for the dashboard and Queues specs.
     #[serde(default)]
     pub ops: Option<OpsSeed>,
+    /// When true, approve every pending access request as `admin`, as an owner would in
+    /// Gauge's Requests page.
+    #[serde(default)]
+    pub approve_requests: bool,
+    /// When true, take back the requester's access to the settings task type first.
+    #[serde(default)]
+    pub reset_requester: bool,
 }
 
 fn default_auth() -> String {
@@ -55,12 +63,22 @@ pub async fn seed_data(
     // Lab seam: skip lepton-auth Backend for task-config server fns.
     match kind {
         E2eAuthKind::Anonymous => boson_app::e2e_lab::set_email_verified_override(None),
-        E2eAuthKind::Admin | E2eAuthKind::Outsider => {
+        E2eAuthKind::Admin
+        | E2eAuthKind::Outsider
+        | E2eAuthKind::Runner
+        | E2eAuthKind::Requester => {
             boson_app::e2e_lab::set_email_verified_override(Some(true));
         }
         E2eAuthKind::Unverified => {
             boson_app::e2e_lab::set_email_verified_override(Some(false));
         }
+    }
+
+    if body.reset_requester {
+        reset_requester_access().await.map_err(|e| {
+            log::error!("seed reset_requester failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
     }
 
     let mut fixtures = e2e_fixtures();
@@ -121,8 +139,18 @@ pub async fn seed_data(
         })?;
     }
 
+    let approved = if body.approve_requests {
+        approve_pending_requests().await.map_err(|e| {
+            log::error!("seed approve_requests failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    } else {
+        0
+    };
+
     Ok(Json(serde_json::json!({
         "ok": true,
+        "approved": approved,
         "failed": failed,
         "runs": runs,
         "auth": kind.as_str(),

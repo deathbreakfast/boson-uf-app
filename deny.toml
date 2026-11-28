@@ -67,4 +67,6 @@ allow-git = [
     # Temporary, with the Cargo.toml [patch] onto the forks; remove together.
     "https://github.com/deathbreakfast/boson",
     "https://github.com/deathbreakfast/boson-coordinator",
+    "https://github.com/deathbreakfast/gauge",
+    "https://github.com/deathbreakfast/unified-field-product",
 ]

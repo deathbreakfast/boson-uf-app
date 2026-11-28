@@ -1,7 +1,8 @@
 //! Queues (Gluon pools): list, detail, pause, resume and purge.
 //!
-//! Every endpoint goes through [`authorize_queue`], which today requires `BosonAdmin` for
-//! each action. Per-queue access replaces that one helper.
+//! Access is per queue, as the session actor, through [`authorize_queue`]: View for the
+//! numbers and jobs, Edit for pause and resume, Delete for purge. The list shows every queue
+//! with the reader's role, and no numbers where the reader can't View.
 
 use leptos::prelude::*;
 
@@ -22,15 +23,32 @@ enum QueueAction {
     Purge,
 }
 
-/// The one queue access check. Every action needs `BosonAdmin` until per-queue access lands.
 #[cfg(feature = "ssr")]
-async fn authorize_queue(ctx: &higgs::Higgs, action: QueueAction) -> Result<(), ServerFnError> {
-    require_session(ctx)?;
-    match action {
-        QueueAction::View | QueueAction::Edit | QueueAction::Purge => {
-            uf_product::permissions::require_permission(super::BOSON_ADMIN_PERMISSION).await
+impl QueueAction {
+    /// The queue bundle action this needs.
+    const fn resource_action(self) -> &'static str {
+        match self {
+            Self::View => "View",
+            Self::Edit => "Edit",
+            Self::Purge => "Delete",
         }
     }
+}
+
+/// The one queue access check: a session, then the action on this queue as the session actor.
+///
+/// # Errors
+///
+/// An authentication error without a session, and a
+/// `permission_denied::boson_queue.{name}.{action}` error when the reader lacks the action.
+#[cfg(feature = "ssr")]
+async fn authorize_queue(
+    ctx: &higgs::Higgs,
+    name: &str,
+    action: QueueAction,
+) -> Result<(), ServerFnError> {
+    require_session(ctx)?;
+    super::access::require_queue(name, action.resource_action()).await
 }
 
 #[cfg(feature = "ssr")]
@@ -89,11 +107,13 @@ async fn actor_label(ctx: &higgs::Higgs) -> String {
 }
 
 /// Every queue with its state and numbers for the last hour, falling behind first.
+///
+/// Each row carries the reader's role; rows the reader can't View have no numbers.
 #[uf_product_macros::server]
 pub async fn list_queues() -> Result<Vec<QueueSummary>, ServerFnError> {
     let result = async {
         let ctx = higgs::Higgs::from_request().await?;
-        authorize_queue(&ctx, QueueAction::View).await?;
+        require_session(&ctx)?;
         let backend = super::helpers::boson_backend()?;
         let queue = super::helpers::queue_backend(backend.as_ref())?;
         let stats = queue
@@ -113,6 +133,9 @@ pub async fn list_queues() -> Result<Vec<QueueSummary>, ServerFnError> {
             rows.push(boson_backend::queue_summary(row, pause.as_ref()));
         }
         boson_backend::sort_queues(&mut rows);
+        super::access::ReaderAccess::from_context()
+            .label_queues(&mut rows)
+            .await;
         Ok(rows)
     }
     .await;
@@ -121,7 +144,10 @@ pub async fn list_queues() -> Result<Vec<QueueSummary>, ServerFnError> {
     result
 }
 
-/// One queue's numbers plus its waiting and running jobs.
+/// One queue's numbers plus its waiting and running jobs. Needs View on the queue.
+///
+/// An unknown name fails with `Queue not found` before the check: it has no bundle to check
+/// against, and the list already shows every name.
 #[uf_product_macros::server]
 pub async fn get_queue(
     /// Pool name.
@@ -130,11 +156,16 @@ pub async fn get_queue(
     let result = async {
         let name = validate_queue_name(&name)?;
         let ctx = higgs::Higgs::from_request().await?;
-        authorize_queue(&ctx, QueueAction::View).await?;
+        require_session(&ctx)?;
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
         let queue = super::helpers::queue_backend(backend)?;
-        let summary = require_queue_summary(queue.as_ref(), &name).await?;
+        let mut summary = require_queue_summary(queue.as_ref(), &name).await?;
+        authorize_queue(&ctx, &name, QueueAction::View).await?;
+        let mut access = super::access::ReaderAccess::from_context();
+        summary.access = access.queue_label(&name).await.to_string();
+        let can_edit = access.queue(&name, "Edit").await;
+        let can_delete = access.queue(&name, "Delete").await;
         let filter = boson_core::JobFilter {
             statuses: vec![
                 boson_core::JobStatus::Running,
@@ -149,7 +180,12 @@ pub async fn get_queue(
             .into_iter()
             .map(job_to_summary)
             .collect();
-        Ok(QueueDetail { summary, jobs })
+        Ok(QueueDetail {
+            summary,
+            jobs,
+            can_edit,
+            can_delete,
+        })
     }
     .await;
     #[cfg(feature = "ssr")]
@@ -161,7 +197,7 @@ pub async fn get_queue(
 async fn set_paused(name: &str, paused: bool) -> Result<QueueSummary, ServerFnError> {
     let name = validate_queue_name(name)?;
     let ctx = higgs::Higgs::from_request().await?;
-    authorize_queue(&ctx, QueueAction::Edit).await?;
+    authorize_queue(&ctx, &name, QueueAction::Edit).await?;
     let backend = super::helpers::boson_backend()?;
     let queue = super::helpers::queue_backend(backend.as_ref())?;
     require_queue_summary(queue.as_ref(), &name).await?;
@@ -211,7 +247,7 @@ pub async fn purge_queue(
     let result = async {
         let name = validate_queue_name(&name)?;
         let ctx = higgs::Higgs::from_request().await?;
-        authorize_queue(&ctx, QueueAction::Purge).await?;
+        authorize_queue(&ctx, &name, QueueAction::Purge).await?;
         let backend = super::helpers::boson_backend()?;
         let queue = super::helpers::queue_backend(backend.as_ref())?;
         require_queue_summary(queue.as_ref(), &name).await?;

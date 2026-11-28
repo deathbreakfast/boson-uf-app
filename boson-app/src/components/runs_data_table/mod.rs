@@ -10,9 +10,9 @@ use orbital::primitives::{
     use_data_table_table_state, Button, ButtonAppearance, DataTable, DataTableEmptyView,
     DataTableEvents, DataTableFeatures, DataTableFilter, DataTableFooterSlot,
     DataTableHeaderChromeConfig, DataTableLoadingView, DataTableLocale, DataTableNoResultsView,
-    DataTablePaginationBar, DataTableQuickSearch, DataTableSource, DataTableTableState,
-    DataTableToolbarSlot, DatePicker, DatetimeTimezone, FilterLogic, FilterOperator, FilterRule,
-    Flex, FlexAlign, FlexJustify, FlexWrap, OrbitalDateTime, PagingMode, Select,
+    DataTablePaginationBar, DataTableQuickSearch, DataTableSource, DataTableToolbarSlot,
+    DatePicker, DatetimeTimezone, FilterLogic, FilterOperator, FilterRule, Flex, FlexAlign,
+    FlexJustify, FlexWrap, OrbitalDateTime, PagingMode, Select,
 };
 use orbital_data::DataValue;
 
@@ -295,6 +295,9 @@ pub fn RunsDataTable(
     } = runs_controls(filters, on_filters_change);
 
     let table_filter = Signal::derive(move || Some(filters.get().to_table_filter()));
+    // The table's quick search, held here so the no-match bar (an overlay, outside the
+    // toolbar's context) can repeat and clear it.
+    let quick_search = RwSignal::new(String::new());
 
     let locale = DataTableLocale {
         quick_search_placeholder: "Search by run or job id".to_string(),
@@ -311,6 +314,7 @@ pub fn RunsDataTable(
                 sortable=false
                 features=DataTableFeatures::empty()
                 filter=table_filter
+                quick_search=quick_search
                 locale=locale
                 header_chrome=DataTableHeaderChromeConfig {
                     column_menu: false,
@@ -346,7 +350,11 @@ pub fn RunsDataTable(
                     />
                 </DataTableEmptyView>
                 <DataTableNoResultsView slot>
-                    <RunsNoMatch filters=filters on_filters_change=on_filters_change />
+                    <RunsNoMatch
+                        filters=filters
+                        quick_search=quick_search
+                        on_filters_change=on_filters_change
+                    />
                 </DataTableNoResultsView>
             </DataTable>
         </BosonDataTableShell>
@@ -445,11 +453,12 @@ fn RunsFooter(filters: Signal<RunsFilters>) -> impl IntoView {
 #[component]
 fn RunsNoMatch(
     filters: Signal<RunsFilters>,
+    /// The table's quick search text.
+    quick_search: RwSignal<String>,
     on_filters_change: Callback<RunsFilters>,
 ) -> impl IntoView {
-    let state = use_context::<DataTableTableState>();
     let message = move || {
-        let searched = state.map_or_else(String::new, |s| s.quick_search.get().trim().to_string());
+        let searched = quick_search.get().trim().to_string();
         let phrase = filters.get().time_phrase();
         match (searched.is_empty(), phrase.is_empty()) {
             (true, true) => "No runs match these filters.".to_string(),
@@ -466,9 +475,7 @@ fn RunsNoMatch(
                     <Button
                         appearance=ButtonAppearance::Secondary
                         on_click=Callback::new(move |_| {
-                            if let Some(s) = state {
-                                s.quick_search.set(String::new());
-                            }
+                            quick_search.set(String::new());
                             // Empty filters: the page drops them from the URL, which restores
                             // the default range.
                             on_filters_change.run(RunsFilters::default());

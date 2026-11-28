@@ -14,6 +14,10 @@ pub const E2E_ADMIN_USER: &str = "user:admin";
 pub const E2E_OUTSIDER_USER: &str = "user:outsider";
 #[cfg(feature = "ssr")]
 pub const E2E_UNVERIFIED_USER: &str = "user:unverified";
+#[cfg(feature = "ssr")]
+pub const E2E_RUNNER_USER: &str = "user:runner";
+#[cfg(feature = "ssr")]
+pub const E2E_REQUESTER_USER: &str = "user:requester";
 
 /// Session kinds for Playwright seed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +30,10 @@ pub enum E2eAuthKind {
     Outsider,
     /// Authenticated but email unverified (holds BosonAdmin for server-fn sad paths).
     Unverified,
+    /// Verified member of the e2e team, which holds Can run on the e2e task type only.
+    Runner,
+    /// Verified user with no access, who asks for it in the request spec.
+    Requester,
 }
 
 impl E2eAuthKind {
@@ -35,6 +43,8 @@ impl E2eAuthKind {
             Self::Admin => "admin",
             Self::Outsider => "outsider",
             Self::Unverified => "unverified",
+            Self::Runner => "runner",
+            Self::Requester => "requester",
         }
     }
 
@@ -43,6 +53,8 @@ impl E2eAuthKind {
             "admin" | "authenticated_verified" => Self::Admin,
             "outsider" => Self::Outsider,
             "unverified" | "authenticated_unverified" => Self::Unverified,
+            "runner" => Self::Runner,
+            "requester" => Self::Requester,
             _ => Self::Anonymous,
         }
     }
@@ -54,6 +66,8 @@ impl E2eAuthKind {
             Self::Admin => Some(E2E_ADMIN_USER),
             Self::Outsider => Some(E2E_OUTSIDER_USER),
             Self::Unverified => Some(E2E_UNVERIFIED_USER),
+            Self::Runner => Some(E2E_RUNNER_USER),
+            Self::Requester => Some(E2E_REQUESTER_USER),
         }
     }
 
@@ -83,6 +97,22 @@ impl E2eAuthKind {
                 avatar_url: None,
                 roles: vec!["user".into()],
                 email_verified: false,
+            }),
+            Self::Runner => AuthSession::Authenticated(AuthenticatedUser {
+                user_id: "runner".into(),
+                email: Some("runner@example.com".into()),
+                display_name: Some("Runner".into()),
+                avatar_url: None,
+                roles: vec!["user".into()],
+                email_verified: true,
+            }),
+            Self::Requester => AuthSession::Authenticated(AuthenticatedUser {
+                user_id: "requester".into(),
+                email: Some("requester@example.com".into()),
+                display_name: Some("Requester".into()),
+                avatar_url: None,
+                roles: vec!["user".into()],
+                email_verified: true,
             }),
         }
     }

@@ -3,8 +3,15 @@
 //!
 //! Leptos UI mounted under `/boson` so operators can see queued jobs, edit task
 //! configuration, and inspect run attempts without building custom pages. Registers
-//! alongside other product apps via `uf_app!` and requires an authenticated session with
-//! `BosonAdmin` before server functions load coordinator data.
+//! alongside other product apps via `uf_app!` and requires an authenticated session before
+//! server functions load coordinator data.
+//!
+//! Access is per task type and per queue (see [`permissions`]): each has its own Gauge
+//! bundle with Can view, Can run, Can edit and Owner roles, an Access tab on its page, and a
+//! "Your access" column in its list. Hosts wire a `uf_product::access::ResourceAccessBackend`
+//! and call `permissions::ensure_boson_resource_bundles` at boot, with the group that holds
+//! `BosonAdmin` as default owner. A host that wires no backend falls back to `BosonAdmin` for
+//! every action.
 //!
 //! Orbital inventory macros (`uf_app!`, `orbital_routes_extract`) emit undocumented
 //! associated items, so this crate allows `missing_docs` at the crate root while keeping
@@ -40,8 +47,9 @@
 //! Mount during host router setup at startup, alongside other `uf_app!` product routes —
 //! the macro registers launcher metadata and the `/boson` inventory entry.
 //!
-//! **Prerequisites:** `ssr` on this crate; authenticated session; `BosonAdmin` permission
-//! ([`BOSON_ADMIN_PERMISSION`]); Boson backend in Leptos request context for IO.
+//! **Prerequisites:** `ssr` on this crate; authenticated session; a resource access backend
+//! and bundles ensured at boot (or `BosonAdmin`, [`BOSON_ADMIN_PERMISSION`], on a host
+//! without one); Boson backend in Leptos request context for IO.
 //!
 //! ```rust,ignore
 //! use leptos::prelude::*;
@@ -67,7 +75,8 @@
 //! failing more than usual, worst first, each with a link to the list behind it. Failing
 //! most ranks task types by failed runs in the last 24 hours.
 //!
-//! **Prerequisites:** [`BosonRoutes`] mounted; `ssr` feature; `BosonAdmin` permission;
+//! **Prerequisites:** [`BosonRoutes`] mounted; `ssr` feature; `BosonAdmin` for the Needs
+//! attention and Failing most panels;
 //! Boson backend request context wired. Queue lines and the oldest-waiting card need an embedded
 //! Boson runtime (see [Queues](#queues)); with a remote coordinator they stay empty.
 //!
@@ -96,7 +105,8 @@
 //! [`pause_queue`] stops new claims (waiting jobs stay, running jobs finish, new jobs still
 //! join), [`resume_queue`] restarts them, and [`purge_queue`] removes waiting jobs only.
 //!
-//! **Prerequisites:** `BosonAdmin`; a coordinator with an embedded Boson runtime. A remote
+//! **Prerequisites:** Edit on the queue to pause or resume, Delete to purge; a coordinator
+//! with an embedded Boson runtime. A remote
 //! coordinator returns `Queues need an embedded Boson runtime on this host`.
 //!
 //! ```rust,ignore

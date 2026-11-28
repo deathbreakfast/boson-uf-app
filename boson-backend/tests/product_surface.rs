@@ -122,50 +122,74 @@ fn layout_missing_nav_sad_path() {
     }
 }
 
+/// Body of `fn_name` in `src`, up to the next server function or end of file.
+fn fn_body<'a>(src: &'a str, fn_name: &str) -> &'a str {
+    let start = src
+        .find(&format!("fn {fn_name}("))
+        .unwrap_or_else(|| panic!("missing `{fn_name}`"));
+    let rest = &src[start..];
+    let end = rest[1..]
+        .find("\n#[uf_product_macros::server")
+        .map_or(rest.len(), |i| i + 1);
+    &rest[..end]
+}
+
 #[test]
-fn admin_mutators_require_boson_admin_happy_path() {
+fn admin_actions_check_the_resource_happy_path() {
     let jobs = read_app("server/jobs.rs");
     let tasks = read_app("server/tasks.rs");
-    let pools = read_app("server/gluon_pools.rs");
     let runs = read_app("server/runs.rs");
-    let combined = format!("{jobs}\n{tasks}\n{pools}\n{runs}");
+    let queues = read_app("server/queues.rs");
 
-    for fn_name in [
-        "cancel_job",
-        "get_task_config",
-        "update_task_config",
-        "list_gluon_pools_for_boson_task_config",
-        "list_runs_page",
-        "list_runs_datatable_page",
-    ] {
+    assert!(
+        fn_body(&jobs, "authorize_job_action").contains(r#"require_task_type(task_name, "Run")"#),
+        "Cancel, Retry and Drop must check Run on the job's task type"
+    );
+    for fn_name in ["get_task_config", "update_task_config"] {
         assert!(
-            combined.contains(fn_name),
-            "server missing admin surface `{fn_name}`"
+            fn_body(&tasks, fn_name).contains(r#"require_task_type(&task_name, "Edit")"#),
+            "`{fn_name}` must check Edit on the task type"
         );
     }
-    let admin_attr = r#"permission = "BosonAdmin""#;
     assert!(
-        combined.matches(admin_attr).count() >= 6,
-        "cancel / task-config / pool / run-list server fns must carry BosonAdmin permission attribute"
+        fn_body(&tasks, "get_task_active_jobs")
+            .contains(r#"require_task_type(&task_name, "View")"#),
+        "get_task_active_jobs must check View on the task type"
+    );
+    for fn_name in ["get_run", "get_run_detail"] {
+        assert!(
+            fn_body(&runs, fn_name).contains(r#"require_task_type(&run.task_name, "View")"#),
+            "`{fn_name}` must check View on the run's task type"
+        );
+    }
+    let queue_check = fn_body(&queues, "resource_action");
+    assert!(
+        queue_check.contains(r#"Self::View => "View""#)
+            && queue_check.contains(r#"Self::Edit => "Edit""#)
+            && queue_check.contains(r#"Self::Purge => "Delete""#),
+        "queue actions must map to View, Edit (pause, resume) and Delete (purge)"
     );
 }
 
 #[test]
-fn admin_mutators_drop_boson_admin_sad_path() {
+fn admin_actions_drop_resource_check_sad_path() {
+    let access = read_app("server/access.rs");
+    let require = fn_body(&access, "require");
+    assert!(
+        require.contains("use_resource_access_backend().is_none()")
+            && require.contains("require_permission(super::BOSON_ADMIN_PERMISSION)")
+            && require.contains("uf_product::access::require(resource, action)"),
+        "checks must go through the access backend, and fall back to BosonAdmin only on a host without one"
+    );
     let jobs = read_app("server/jobs.rs");
     let tasks = read_app("server/tasks.rs");
     let pools = read_app("server/gluon_pools.rs");
     let runs = read_app("server/runs.rs");
     let combined = format!("{jobs}\n{tasks}\n{pools}\n{runs}");
-    let admin_attr = r#"permission = "BosonAdmin""#;
-    assert!(
-        combined.matches(admin_attr).count() >= 6,
-        "dropping BosonAdmin from cancel/config/pools/runs opens ops without admin gate"
-    );
     assert!(
         !combined.contains(r#"permission = "GaugeAdmin""#)
             && !combined.contains(r#"permission = "PhotonAdmin""#),
-        "Boson admin mutators must not gate on GaugeAdmin or PhotonAdmin"
+        "Boson admin actions must not gate on GaugeAdmin or PhotonAdmin"
     );
 }
 
@@ -212,24 +236,13 @@ fn server_drop_require_session_on_get_tasks_sad_path() {
 
     let jobs = read_app("server/jobs.rs");
     for action in ["cancel_job", "retry_jobs", "drop_jobs"] {
-        let start = jobs
-            .find(&format!("pub async fn {action}"))
-            .unwrap_or_else(|| panic!("{action}"));
-        let body = &jobs[start..start + 650.min(jobs.len() - start)];
+        let body = fn_body(&jobs, action);
         assert!(
-            body.contains("authorize_job_action(&ctx, JobAction::"),
-            "{action} must run the job action check before Boson IO"
+            body.contains("require_session(&ctx)?")
+                && body.contains("authorize_job_action(&task_name, JobAction::"),
+            "{action} must require a session and run the job action check before Boson writes"
         );
     }
-    let start = jobs
-        .find("async fn authorize_job_action")
-        .expect("authorize_job_action");
-    let body = &jobs[start..start + 300.min(jobs.len() - start)];
-    assert!(
-        body.contains("require_session(ctx)?")
-            && body.contains("require_permission(super::BOSON_ADMIN_PERMISSION)"),
-        "the job action check must require a session and BosonAdmin"
-    );
 }
 
 #[test]
@@ -545,29 +558,20 @@ fn ops_path_helpers_drop_encoding_sad_path() {
 }
 
 #[test]
-fn jobs_lists_hide_details_without_admin_sad_path() {
+fn jobs_lists_hide_details_without_view_sad_path() {
     let jobs = read_app("server/jobs.rs");
-    for list in [
-        "pub async fn list_jobs_page",
-        "pub async fn list_jobs_datatable_page",
-    ] {
-        let start = jobs.find(list).unwrap_or_else(|| panic!("{list}"));
-        let rest = &jobs[start..];
-        let end = rest[1..]
-            .find("\n#[uf_product_macros::server")
-            .map_or(rest.len(), |i| i + 1);
-        let body = &rest[..end];
+    for list in ["list_jobs_page", "list_jobs_datatable_page"] {
         assert!(
-            body.contains("if !can_view_job_details().await") && body.contains("hide_job_details("),
-            "{list} must blank job arguments and run errors for callers without BosonAdmin"
+            fn_body(&jobs, list).contains("apply_job_access("),
+            "{list} must blank job arguments and run errors where the reader can't View"
         );
     }
-    let start = jobs
-        .find("async fn can_view_job_details")
-        .expect("can_view_job_details");
+    let apply = fn_body(&jobs, "apply_job_access");
     assert!(
-        jobs[start..start + 200].contains("has_permission(super::BOSON_ADMIN_PERMISSION)"),
-        "job details must stay behind BosonAdmin, as run errors are in the runs lists"
+        apply.contains(r#"task_type(&job.task_name, "View")"#)
+            && apply.contains("args_summary.clear()")
+            && apply.contains("last_error = None"),
+        "job details must stay behind View on the task type"
     );
 }
 
@@ -587,16 +591,19 @@ fn queue_endpoints_share_one_access_check_happy_path() {
         );
     }
     assert!(
-        queues.contains("async fn authorize_queue")
-            && queues.contains("require_permission(super::BOSON_ADMIN_PERMISSION)"),
-        "queue endpoints must check BosonAdmin through authorize_queue"
+        fn_body(&queues, "authorize_queue").contains("super::access::require_queue("),
+        "queue endpoints must check the queue's action through authorize_queue"
     );
     let checks = queues
-        .matches("authorize_queue(&ctx, QueueAction::")
+        .matches("authorize_queue(&ctx, &name, QueueAction::")
         .count();
     assert!(
-        checks >= 4,
-        "list, get, pause/resume and purge must each call authorize_queue (found {checks})"
+        checks >= 3,
+        "get, pause/resume and purge must each call authorize_queue (found {checks})"
+    );
+    assert!(
+        fn_body(&queues, "list_queues").contains("label_queues("),
+        "the queues list must label every row with the reader's access"
     );
 }
 

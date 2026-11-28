@@ -7,7 +7,9 @@
 //! cursor doesn't fit the query walks forward to its offset by keyset, then hands out cursors
 //! again. `list_jobs_page` (infinite scroll) pages by offset.
 //!
-//! [`authorize_job_action`] is the one check behind Cancel, Retry and Drop.
+//! [`authorize_job_action`] is the one check behind Cancel, Retry and Drop: Run on the job's
+//! task type, as the session actor. Rows also carry whether the reader holds Run, and the
+//! arguments and errors of task types the reader can't View are left out.
 
 use leptos::prelude::*;
 use orbital_paging::{Page, PageRequest};
@@ -31,33 +33,52 @@ pub enum JobAction {
     Drop,
 }
 
-/// The access check for every job action.
+/// The access check for every job action: Run on the job's task type, as the session actor.
 ///
-/// Today every action needs a session and Gauge permission `BosonAdmin`. Per-resource access
-/// (Run on the task type) replaces the body here, in one place.
+/// Cancel, Retry and Drop all need Run; the action is passed so the one check stays the place
+/// to tell them apart if they ever need different actions.
+///
+/// # Errors
+///
+/// A `permission_denied::boson_task_type.{task}.Run` error when the reader lacks Run.
 #[cfg(feature = "ssr")]
-async fn authorize_job_action(ctx: &higgs::Higgs, action: JobAction) -> Result<(), ServerFnError> {
-    require_session(ctx)?;
-    let _ = action;
-    uf_product::permissions::require_permission(super::BOSON_ADMIN_PERMISSION).await
+async fn authorize_job_action(task_name: &str, action: JobAction) -> Result<(), ServerFnError> {
+    match action {
+        JobAction::Cancel | JobAction::Retry | JobAction::Drop => {
+            super::access::require_task_type(task_name, "Run").await
+        }
+    }
 }
 
-/// Whether the caller may see job arguments and run errors in the jobs lists.
-///
-/// Both can carry per-user data, and run errors are `BosonAdmin`-only in the runs lists, so the
-/// session-only jobs lists show them to `BosonAdmin` holders alone. Swap this together with
-/// [`authorize_job_action`] when per-resource access arrives.
+/// The task type of a stored job, for the per-job check.
 #[cfg(feature = "ssr")]
-async fn can_view_job_details() -> bool {
-    uf_product::permissions::has_permission(super::BOSON_ADMIN_PERMISSION).await
+async fn job_task_name(
+    backend: &dyn boson_coordinator::BosonCoordinatorBackend,
+    job_id: &str,
+) -> Option<String> {
+    backend.get_job(job_id).await.map(|j| j.task_name)
 }
 
-/// Blank the arguments and last error on rows the caller may not see in detail.
+/// Mark the rows the reader may act on, and blank the arguments and last error on rows of
+/// task types the reader can't View. Both can carry per-user data.
 #[cfg(feature = "ssr")]
-fn hide_job_details(items: &mut [JobSummary]) {
+async fn apply_job_access(items: &mut [JobSummary]) {
+    let mut access = super::access::ReaderAccess::from_context();
     for job in items {
-        job.args_summary.clear();
-        job.last_error = None;
+        job.can_run = access.task_type(&job.task_name, "Run").await;
+        if !access.task_type(&job.task_name, "View").await {
+            job.args_summary.clear();
+            job.last_error = None;
+        }
+    }
+}
+
+/// The failure row for a job the reader may not act on.
+#[cfg(feature = "ssr")]
+fn denied_failure(job_id: String, task_name: &str) -> JobActionFailure {
+    JobActionFailure {
+        job_id,
+        error: format!("you need Run on the task type {task_name}"),
     }
 }
 
@@ -85,9 +106,13 @@ pub async fn cancel_job(
     let result = async {
         boson_backend::validate_job_id(&job_id).map_err(|e| ServerFnError::new(e.to_string()))?;
         let ctx = higgs::Higgs::from_request().await?;
-        authorize_job_action(&ctx, JobAction::Cancel).await?;
+        require_session(&ctx)?;
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
+        let task_name = job_task_name(backend, &job_id).await.ok_or_else(|| {
+            ServerFnError::new(format!("Failed to cancel job: job not found: {job_id}"))
+        })?;
+        authorize_job_action(&task_name, JobAction::Cancel).await?;
         backend
             .cancel_job(&job_id)
             .await
@@ -128,13 +153,28 @@ pub async fn retry_jobs(
     let result = async {
         validate_job_ids(&job_ids)?;
         let ctx = higgs::Higgs::from_request().await?;
-        authorize_job_action(&ctx, JobAction::Retry).await?;
+        require_session(&ctx)?;
         let actor_json = serde_json::to_value(ctx.actor())
             .map_err(|e| ServerFnError::new(format!("Failed to read the session actor: {e}")))?;
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
         let mut outcome = JobActionOutcome::default();
         for from_job_id in job_ids {
+            // Fail closed: a job we can't find has no task type to check.
+            let Some(task_name) = job_task_name(backend, &from_job_id).await else {
+                outcome.failed.push(JobActionFailure {
+                    job_id: from_job_id,
+                    error: "it no longer exists".to_string(),
+                });
+                continue;
+            };
+            if authorize_job_action(&task_name, JobAction::Retry)
+                .await
+                .is_err()
+            {
+                outcome.failed.push(denied_failure(from_job_id, &task_name));
+                continue;
+            }
             match backend.retry_job(&from_job_id, actor_json.clone()).await {
                 Ok(job_id) => {
                     let pool = backend
@@ -173,11 +213,26 @@ pub async fn drop_jobs(
     let result = async {
         validate_job_ids(&job_ids)?;
         let ctx = higgs::Higgs::from_request().await?;
-        authorize_job_action(&ctx, JobAction::Drop).await?;
+        require_session(&ctx)?;
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
         let mut outcome = JobActionOutcome::default();
         for job_id in job_ids {
+            // Fail closed: a job we can't find has no task type to check.
+            let Some(task_name) = job_task_name(backend, &job_id).await else {
+                outcome.failed.push(JobActionFailure {
+                    job_id,
+                    error: "it no longer exists".to_string(),
+                });
+                continue;
+            };
+            if authorize_job_action(&task_name, JobAction::Drop)
+                .await
+                .is_err()
+            {
+                outcome.failed.push(denied_failure(job_id, &task_name));
+                continue;
+            }
             match backend.drop_failed_job(&job_id).await {
                 Ok(()) => outcome.dropped.push(job_id),
                 Err(e) => outcome.failed.push(JobActionFailure {
@@ -217,9 +272,7 @@ pub async fn list_jobs_page(
             .await;
 
         let mut dtos: Vec<JobSummary> = jobs.into_iter().map(job_to_summary).collect();
-        if !can_view_job_details().await {
-            hide_job_details(&mut dtos);
-        }
+        apply_job_access(&mut dtos).await;
 
         let total_count: Option<u64> = if offset == 0 {
             Some(backend.count_jobs(status).await)
@@ -352,9 +405,7 @@ pub async fn list_jobs_datatable_page(
                 }
             }
         }
-        if !can_view_job_details().await {
-            hide_job_details(&mut page.items);
-        }
+        apply_job_access(&mut page.items).await;
         Ok(page)
     }
     .await;

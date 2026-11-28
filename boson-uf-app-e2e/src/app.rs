@@ -51,7 +51,8 @@ pub fn App() -> impl IntoView {
     }
 }
 
-/// Wire Gauge as uf-product permission backend (same pattern as neutrino-uf-app-e2e).
+/// Wire Gauge as uf-product's permission backend (same pattern as neutrino-uf-app-e2e) and as
+/// the per-resource access backend for task types and queues.
 #[cfg(feature = "ssr")]
 pub fn wire_gauge_permissions_bridge() {
     use std::sync::Arc;
@@ -74,6 +75,9 @@ pub fn wire_gauge_permissions_bridge() {
     }
 
     uf_product::permissions::provide_permission_backend(Arc::new(GaugePermissionBackend));
+    uf_product::access::provide_resource_access_backend(Arc::new(
+        crate::access_backend::GaugeResourceAccess::new(crate::e2e_valence::BOSON_ADMINS_GROUP_ID),
+    ));
 }
 
 #[cfg(not(feature = "ssr"))]

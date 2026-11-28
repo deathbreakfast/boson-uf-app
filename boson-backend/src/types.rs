@@ -61,6 +61,10 @@ pub struct TaskSummary {
     /// owner from the task type's Access settings.
     #[serde(default)]
     pub owner: Option<String>,
+    /// The reader's role on the task type ("Owner", "Can run", "No access"), empty when the
+    /// endpoint doesn't check it. Rows with "No access" carry no numbers.
+    #[serde(default)]
+    pub access: String,
 }
 
 /// Summary of a Boson job for queue / list views.
@@ -90,6 +94,9 @@ pub struct JobSummary {
     pub last_error: Option<String>,
     /// RFC3339 finish time of the job's latest run (failed-jobs list only).
     pub failed_at: Option<String>,
+    /// Whether the reader holds Run on the job's task type (Cancel, Retry, Drop).
+    #[serde(default)]
+    pub can_run: bool,
 }
 
 /// Summary of a Boson run for history / detail views.
@@ -230,7 +237,12 @@ pub struct TaskDetail {
     pub arguments: Vec<TaskArgumentRow>,
     /// Latest runs of this task, newest first.
     pub recent_runs: Vec<RunSummary>,
-    /// Whether the session may open the Settings tab.
+    /// Whether the reader holds View: without it the page shows only the name and owner, and
+    /// the numbers, arguments and runs are left empty.
+    pub can_view: bool,
+    /// Whether the reader holds Run (retry, cancel and drop this type's jobs).
+    pub can_run: bool,
+    /// Whether the reader holds Edit (the Settings tab).
     pub can_edit: bool,
 }
 
@@ -262,8 +274,8 @@ pub struct RunDetail {
     pub attempts: Vec<RunSummary>,
     /// How long a running run has been going, measured when the page loaded.
     pub running_for_ms: Option<i64>,
-    /// Whether the session may retry, drop or cancel the job.
-    pub can_edit: bool,
+    /// Whether the reader holds Run on the task type, so may retry, drop or cancel the job.
+    pub can_run: bool,
 }
 
 /// Resolves a person's display name from a user id for "Started by".

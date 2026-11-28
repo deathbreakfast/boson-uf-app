@@ -71,7 +71,9 @@ let stats = dashboard_stats(jobs_waiting, jobs_running, failed_24h, oldest_waiti
 ```
 
 Inventory names match `boson` / `/boson`. Layout uses `RequireAuthenticated`;
-ops mutators carry `BosonAdmin` (manifest
+ops actions check the task type or queue they touch (`permissions::task_type_ref`,
+`permissions::queue_ref`) through the host's resource access backend; this example wires
+none, so every action falls back to `BosonAdmin` (manifest
 `permissions::BosonPermission`). Task config also requires a verified email.
 Wire Higgs + Boson coordinator + session extractors in host bootstrap before
 mounting the routes.

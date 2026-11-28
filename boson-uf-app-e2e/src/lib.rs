@@ -1,6 +1,8 @@
 //! Boson ops UI Playwright host.
 #![allow(missing_docs)]
 
+#[cfg(feature = "ssr")]
+mod access_backend;
 mod app;
 mod boson_routes_eager;
 #[cfg(feature = "ssr")]
