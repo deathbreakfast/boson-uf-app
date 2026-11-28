@@ -12,12 +12,15 @@ const queuePath = (name: string) => `/boson/queues/${encodeURIComponent(name)}`;
 /** Orbital components put their test id on an injected `<style>` too; skip that copy. */
 const byTestId = (page: Page, id: string) => page.locator(`[data-testid="${id}"]:not(style)`);
 
-/** The "Your access" badge on the Tasks row of one task type. */
+/**
+ * The "Your access" value on the Tasks list card of one task type. The Tasks table renders as
+ * a list: each card shows its fields as label and value.
+ */
 const taskAccess = (page: Page, name: string) =>
   page
-    .getByRole("row")
-    .filter({ has: page.getByTestId(`task-${name}`) })
-    .getByTestId("boson-your-access");
+    .getByTestId(`data-table-list-card-${name}`)
+    .locator(".orbital-data-table__list-card-field", { hasText: "Your access" })
+    .locator(".orbital-data-table__list-card-value");
 
 test.describe("e2e.access", () => {
   test("e2e.access.admin_owns_every_resource", async ({ page }) => {
