@@ -17,7 +17,9 @@ use orbital::primitives::{
 use orbital_data::DataValue;
 
 use crate::components::format::count_noun;
-use crate::components::{BosonDataTableShell, BosonDataTableSkeletonRows};
+use crate::components::{
+    track_load_error, BosonDataTableShell, BosonDataTableSkeletonRows, LoadError, TableLoadError,
+};
 
 pub use columns::short_id_link;
 use columns::{runs_table_columns, RUNS_TABLE_COLUMNS};
@@ -47,6 +49,8 @@ pub struct RunsFilters {
     pub from: String,
     /// End date of the time range, for picked dates.
     pub to: String,
+    /// Whose runs come first (`?show=`).
+    pub show: boson_backend::ShowMode,
 }
 
 impl RunsFilters {
@@ -65,6 +69,7 @@ impl RunsFilters {
         task: Option<String>,
         from: Option<String>,
         to: Option<String>,
+        show: Option<String>,
         scoped: bool,
     ) -> Self {
         Self {
@@ -74,17 +79,23 @@ impl RunsFilters {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| Self::default_from(scoped).to_string()),
             to: to.unwrap_or_default(),
+            show: boson_backend::ShowMode::from_key(&show.unwrap_or_default()),
         }
     }
 
     /// Query string for these filters (without `?`), keeping `job` first when set.
     pub fn to_query(&self, job: Option<&str>) -> String {
+        let show = match self.show {
+            boson_backend::ShowMode::YoursFirst => "",
+            other => other.key(),
+        };
         let pairs = [
             ("job", job.unwrap_or_default()),
             ("status", self.status.as_str()),
             ("task", self.task.as_str()),
             ("from", self.from.as_str()),
             ("to", self.to.as_str()),
+            ("show", show),
         ];
         pairs
             .iter()
@@ -136,6 +147,7 @@ impl RunsFilters {
         if !self.to.is_empty() {
             items.push(rule(boson_backend::TO_FIELD, &self.to));
         }
+        items.push(rule(boson_backend::SHOW_FIELD, self.show.key()));
         DataTableFilter {
             items,
             logic: FilterLogic::And,
@@ -232,6 +244,7 @@ fn runs_controls(
             task: task.get(),
             from,
             to,
+            show: filters.get_untracked().show,
         };
         if next != filters.get_untracked() {
             on_filters_change.run(next);
@@ -279,10 +292,13 @@ pub fn RunsDataTable(
         );
     });
 
+    let load_error: LoadError = RwSignal::new(None);
+    let refresh = RwSignal::new(0u32);
     let data_source = DataTableSource::Server {
-        fetcher: build_runs_fetcher(scope),
+        fetcher: track_load_error(build_runs_fetcher(scope), load_error),
         page_size,
     };
+    let on_retry = Callback::new(move |()| refresh.update(|n| *n += 1));
 
     let empty_desc = empty_description.unwrap_or("Run history will appear here when jobs execute.");
 
@@ -316,6 +332,7 @@ pub fn RunsDataTable(
                 filter=table_filter
                 quick_search=quick_search
                 locale=locale
+                refresh_signal=Signal::derive(move || refresh.get())
                 header_chrome=DataTableHeaderChromeConfig {
                     column_menu: false,
                     column_filter_button: false,
@@ -344,17 +361,21 @@ pub fn RunsDataTable(
                     <BosonDataTableSkeletonRows columns=RUNS_TABLE_COLUMNS />
                 </DataTableLoadingView>
                 <DataTableEmptyView slot>
-                    <EmptyState
-                        message="No runs"
-                        description=empty_desc
-                    />
+                    <TableLoadError error=load_error noun="runs" on_retry=on_retry>
+                        <EmptyState
+                            message="No runs"
+                            description=empty_desc
+                        />
+                    </TableLoadError>
                 </DataTableEmptyView>
                 <DataTableNoResultsView slot>
-                    <RunsNoMatch
-                        filters=filters
-                        quick_search=quick_search
-                        on_filters_change=on_filters_change
-                    />
+                    <TableLoadError error=load_error noun="runs" on_retry=on_retry>
+                        <RunsNoMatch
+                            filters=filters
+                            quick_search=quick_search
+                            on_filters_change=on_filters_change
+                        />
+                    </TableLoadError>
                 </DataTableNoResultsView>
             </DataTable>
         </BosonDataTableShell>
@@ -477,8 +498,11 @@ fn RunsNoMatch(
                         on_click=Callback::new(move |_| {
                             quick_search.set(String::new());
                             // Empty filters: the page drops them from the URL, which restores
-                            // the default range.
-                            on_filters_change.run(RunsFilters::default());
+                            // the default range. Show stays as picked.
+                            on_filters_change.run(RunsFilters {
+                                show: filters.get_untracked().show,
+                                ..RunsFilters::default()
+                            });
                         })
                     >
                         "Clear filters"

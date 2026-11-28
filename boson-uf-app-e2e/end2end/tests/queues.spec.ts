@@ -124,7 +124,7 @@ test.describe("pw-boson-queues", () => {
     });
     await waitForHydrated(page);
     await expect(page.getByTestId("boson-queue-detail")).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/Couldn't load this queue\..*Queue not found/)).toBeVisible({
+    await expect(page.getByText(/Couldn't load this queue\. That's no longer here\./)).toBeVisible({
       timeout: 60_000,
     });
   });

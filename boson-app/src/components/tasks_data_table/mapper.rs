@@ -2,11 +2,9 @@ use std::collections::HashMap;
 
 use orbital_data::{DataRecord, DataValue};
 
+use crate::components::owner_fields;
 use crate::permissions::NO_ACCESS;
 use crate::server::TaskSummary;
-
-/// Owner cell text when the host supplies no owner for a task type.
-pub const NO_OWNER: &str = "Not set yet";
 
 /// One Tasks row. A task type the reader can't View shows its name, owner, queue and a
 /// "No access" tag, with the number cells left blank.
@@ -18,13 +16,14 @@ pub fn task_to_record(task: TaskSummary) -> DataRecord {
         task.success_rate_pct
             .map_or_else(|| "No runs yet".to_string(), |r| format!("{r:.1}%")),
     );
-    let owner = task.owner.unwrap_or_else(|| NO_OWNER.to_string());
+    let [owner, yours] = owner_fields(task.owner.as_deref(), task.yours);
 
     DataRecord::new(
         id,
         HashMap::from([
             ("name".into(), DataValue::Text(task.name)),
-            ("owner".into(), DataValue::Text(owner)),
+            owner,
+            yours,
             ("queue".into(), DataValue::Text(task.effective_pool)),
             (
                 "jobs_queued".into(),

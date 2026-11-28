@@ -21,7 +21,10 @@ use orbital::components::{
 };
 use orbital::primitives::Flex;
 
-use crate::components::{boson_table_page_layout, BosonCardContent, JobsDataTable};
+use crate::components::{
+    boson_table_page_layout, use_show_mode, BosonCardContent, JobsDataTable, ListHeader, OwnedKind,
+};
+use crate::errors::{friendly_error, FriendlyError, FriendlyErrorBar};
 use crate::live::{boson_job_event_is_status, boson_jobs_subscription, BosonJobsLiveSource};
 use crate::server::{cancel_job, JobSummary};
 
@@ -104,7 +107,7 @@ struct CancelFlow {
     job_id: RwSignal<Option<String>>,
     job: Signal<Option<JobSummary>>,
     success: RwSignal<Option<String>>,
-    error: RwSignal<Option<String>>,
+    error: RwSignal<Option<FriendlyError>>,
     on_cancel: Callback<String>,
     on_confirm: Callback<()>,
 }
@@ -114,7 +117,7 @@ fn cancel_flow(rows: RwSignal<HashMap<String, JobSummary>>, refresh: RwSignal<u3
     let cancel_open = RwSignal::new(false);
     let cancel_id = RwSignal::new(None::<String>);
     let cancel_success_message = RwSignal::new(None::<String>);
-    let cancel_error = RwSignal::new(None::<String>);
+    let cancel_error = RwSignal::new(None::<FriendlyError>);
     let cancel_job_row = Signal::derive(move || {
         let id = cancel_id.get()?;
         rows.with(|map| map.get(&id).cloned())
@@ -142,7 +145,7 @@ fn cancel_flow(rows: RwSignal<HashMap<String, JobSummary>>, refresh: RwSignal<u3
         spawn_local_scoped(async move {
             match cancel_job(job_id.clone()).await {
                 Ok(()) => cancel_success_message.set(Some(cancel_success(&job_id, job.as_ref()))),
-                Err(e) => cancel_error.set(Some(e.to_string())),
+                Err(e) => cancel_error.set(Some(friendly_error(&e))),
             }
             cancel_pending.update(|s| {
                 s.remove(&job_id);
@@ -169,6 +172,7 @@ fn cancel_flow(rows: RwSignal<HashMap<String, JobSummary>>, refresh: RwSignal<u3
 #[component]
 pub fn BosonJobsPage() -> impl IntoView {
     let (tab, selected_tab) = use_jobs_tab();
+    let (show, on_show_change) = use_show_mode();
 
     let rows = RwSignal::new(HashMap::<String, JobSummary>::new());
     let refresh = RwSignal::new(0u32);
@@ -219,22 +223,23 @@ pub fn BosonJobsPage() -> impl IntoView {
                     </div>
                 })}
                 {move || cancel_error.get().map(|e| view! {
-                    <div data-testid="jobs-cancel-error">
-                        <MessageBar intent=MessageBarIntent::Error>{e}</MessageBar>
-                    </div>
+                    <FriendlyErrorBar error=e data_testid="jobs-cancel-error" />
                 })}
+                <ListHeader kind=OwnedKind::TaskTypes mode=show on_change=on_show_change />
 
-                {move || match tab.get() {
-                    JobsTab::Failed => view! {
+                // Rebuilt when the tab or Show changes (a new list from its first page).
+                {move || match (tab.get(), show.get()) {
+                    (JobsTab::Failed, mode) => view! {
                         <FailedJobsPanel
                             rows=rows
                             refresh=refresh
                             card_class=card_class.get_value()
                             card_content_class=card_content_class.get_value()
+                            show=mode
                         />
                     }
                     .into_any(),
-                    active_or_finished => view! {
+                    (active_or_finished, mode) => view! {
                         <Card class=card_class.get_value()>
                             <BosonCardContent class=card_content_class.get_value()>
                                 <JobsDataTable
@@ -243,6 +248,7 @@ pub fn BosonJobsPage() -> impl IntoView {
                                     cancel_pending=cancel_pending.read_only()
                                     on_cancel=on_cancel
                                     refresh_signal=refresh_signal
+                                    show=mode
                                 />
                             </BosonCardContent>
                         </Card>

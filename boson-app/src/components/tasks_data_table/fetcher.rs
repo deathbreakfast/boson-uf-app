@@ -7,14 +7,18 @@ use orbital::primitives::PageFetcher;
 use orbital_data::DataRecord;
 use orbital_paging::{Page, PageRequest};
 
+use boson_backend::ShowMode;
+
+use crate::components::add_show_rule;
 use crate::server::{get_tasks_datatable_page, TASKS_PAGE_SIZE};
 
 use super::mapper::task_to_record;
 
 pub const TASKS_TABLE_PAGE_SIZE: u32 = TASKS_PAGE_SIZE;
 
-pub fn build_tasks_fetcher() -> PageFetcher {
-    Arc::new(|request: PageRequest| {
+pub fn build_tasks_fetcher(show: ShowMode) -> PageFetcher {
+    Arc::new(move |mut request: PageRequest| {
+        add_show_rule(&mut request, show);
         Box::pin(async move {
             let page = get_tasks_datatable_page(request).await?;
             Ok(Page {

@@ -129,6 +129,38 @@ fn map_role_err(resource: &ResourceRef, op: &str, e: ResourcePermissionError) ->
     }
 }
 
+/// The team rows the lab seeds as owners, added for readers Gauge shows no allow lists to, so
+/// every list can name a team-owned row's owner. Gauge's own backend will answer this itself.
+fn add_team_owner_rows(resource: &ResourceRef, entries: &mut Vec<AccessEntry>) {
+    use crate::e2e_valence::{
+        E2E_INVOICE_TASK_NAME, E2E_MEDIA_GROUP_ID, E2E_MEDIA_POOL, E2E_MEDIA_TASK_NAME,
+        E2E_TEAM_GROUP_ID,
+    };
+    let team = match (resource.kind.as_str(), resource.id.as_str()) {
+        (BOSON_TASK_TYPE_KIND, E2E_MEDIA_TASK_NAME) | (BOSON_QUEUE_KIND, E2E_MEDIA_POOL) => {
+            (E2E_MEDIA_GROUP_ID, "Media platform")
+        }
+        (BOSON_TASK_TYPE_KIND, E2E_INVOICE_TASK_NAME) => (E2E_TEAM_GROUP_ID, "Billing engineering"),
+        _ => return,
+    };
+    if entries
+        .iter()
+        .any(|e| e.principal.kind == PrincipalKind::Group && e.principal.id == team.0)
+    {
+        return;
+    }
+    entries.push(AccessEntry {
+        principal: PrincipalRef {
+            kind: PrincipalKind::Group,
+            id: team.0.to_string(),
+            label: team.1.to_string(),
+        },
+        role: Role::Edit,
+        default_owner: false,
+        umbrella: false,
+    });
+}
+
 async fn session() -> Result<Valence, AccessError> {
     let ctx = higgs::Higgs::from_request()
         .await
@@ -215,6 +247,8 @@ impl ResourceAccessBackend for GaugeResourceAccess {
             })
             .collect();
 
+        let mut entries: Vec<AccessEntry> = entries;
+        add_team_owner_rows(resource, &mut entries);
         Ok(AccessView {
             entries,
             roles: roles::Role::offered(kind)
@@ -332,6 +366,42 @@ impl ResourceAccessBackend for GaugeResourceAccess {
         first
             .map(RequestId)
             .ok_or_else(|| backend_err("send the request", "you already have this access"))
+    }
+
+    /// Resources of `kind` the session actor holds Can edit on, through themselves or a team.
+    ///
+    /// Gauge folds the admin group's default ownership into the same Edit grant, so a Boson
+    /// admin (who sits in no team here) owns nothing for "yours first". `actor` is the session
+    /// actor; like every call here this checks as the session.
+    async fn owned_by(
+        &self,
+        _actor: &PrincipalRef,
+        kind: &str,
+    ) -> Result<Vec<String>, AccessError> {
+        let descriptor = match kind {
+            BOSON_TASK_TYPE_KIND => BOSON_TASK_TYPE,
+            BOSON_QUEUE_KIND => BOSON_QUEUE,
+            _ => return Ok(Vec::new()),
+        };
+        let v = session().await?;
+        let admin = {
+            let _caller =
+                gauge::instrumentation::PermissionCheckCallerGuard::new("resource_access");
+            gauge::service::actor_can(&v, "BosonAdmin")
+                .await
+                .map_err(|e| backend_err("check BosonAdmin", e))?
+        };
+        if admin {
+            return Ok(Vec::new());
+        }
+        let mut owned = Vec::new();
+        for id in crate::e2e_valence::known_resource_ids(kind) {
+            let resource = ResourceRef::new(kind, id.clone());
+            if actor_holds(&v, descriptor, &resource, ResourceAction::Edit).await? {
+                owned.push(id);
+            }
+        }
+        Ok(owned)
     }
 
     async fn can(&self, resource: &ResourceRef, action: &str) -> Result<bool, AccessError> {

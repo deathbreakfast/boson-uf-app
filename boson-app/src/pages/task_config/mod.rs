@@ -119,6 +119,21 @@ fn field_error<T: Clone + Send + Sync + 'static>(
     Signal::derive(move || parsed.get().err())
 }
 
+/// The queue list didn't load: say so; the Select offers the default queues meanwhile.
+#[component]
+fn PoolsLoadWarning(error: crate::errors::FriendlyError) -> impl IntoView {
+    view! {
+        <div data-testid="task-config-pools-error">
+            <MessageBar intent=MessageBarIntent::Warning>
+                {format!(
+                    "Couldn't load this host's queues. {} The list shows the default queues until it loads.",
+                    error.detail_for_list()
+                )}
+            </MessageBar>
+        </div>
+    }
+}
+
 /// The task type page's Settings tab: where it runs, retries and limits, with Save and
 /// Discard changes. Requires verified email (the tab wraps it in `RequireAuthenticated`).
 #[component]
@@ -164,11 +179,16 @@ pub fn BosonTaskConfigPage(
             <Suspense fallback=move || view! { <TaskConfigSkeleton /> }>
                 {move || match (config_res.get(), pools_res.get()) {
                     (Some(Ok(_)), pools) => {
+                        let pools_error = pools
+                            .as_ref()
+                            .and_then(|r| r.as_ref().err())
+                            .map(crate::errors::friendly_error);
                         let pool_options = pools
                             .and_then(Result::ok)
                             .unwrap_or_else(boson_backend::default_gluon_pool_rows);
                         view! {
                             <Flex vertical=true gap=SpacingSize::Size160.flex_gap()>
+                                {pools_error.map(|e| view! { <PoolsLoadWarning error=e /> })}
                                 {move || form.saved.get().then(|| view! {
                                     <div data-testid="task-config-saved">
                                         <MessageBar intent=MessageBarIntent::Success>
@@ -209,7 +229,10 @@ pub fn BosonTaskConfigPage(
                         .into_any()
                     }
                     (Some(Err(e)), _) => view! {
-                        <MessageBar intent=MessageBarIntent::Error>{e.to_string()}</MessageBar>
+                        <crate::errors::FriendlyErrorBar
+                            error=crate::errors::friendly_error(&e)
+                            data_testid="task-config-load-error"
+                        />
                     }.into_any(),
                     (None, _) => view! { <TaskConfigSkeleton /> }.into_any(),
                 }}

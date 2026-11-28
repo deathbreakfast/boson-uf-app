@@ -3,12 +3,13 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use boson_backend::JobsTab;
+use boson_backend::{JobsTab, ShowMode};
 use leptos::prelude::*;
 use orbital::primitives::PageFetcher;
 use orbital_data::DataRecord;
 use orbital_paging::{Page, PageRequest};
 
+use crate::components::add_show_rule;
 use crate::server::{list_jobs_datatable_page, JobSummary, JOBS_PAGE_SIZE};
 
 use super::mapper::job_to_record;
@@ -18,9 +19,10 @@ pub const QUEUE_TABLE_PAGE_SIZE: u32 = JOBS_PAGE_SIZE;
 /// Rows the jobs tables have loaded, by job id, so dialogs can say what a job is.
 pub type JobRows = RwSignal<HashMap<String, JobSummary>>;
 
-/// Fetch one tab's page and remember its rows in `rows`.
-pub fn build_jobs_fetcher(tab: JobsTab, rows: JobRows) -> PageFetcher {
-    Arc::new(move |request: PageRequest| {
+/// Fetch one tab's page for `show` and remember its rows in `rows`.
+pub fn build_jobs_fetcher(tab: JobsTab, rows: JobRows, show: ShowMode) -> PageFetcher {
+    Arc::new(move |mut request: PageRequest| {
+        add_show_rule(&mut request, show);
         Box::pin(async move {
             let page = list_jobs_datatable_page(request, Some(tab.key().to_string())).await?;
             rows.update(|map| {

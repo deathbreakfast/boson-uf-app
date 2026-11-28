@@ -190,7 +190,7 @@ pub fn DashboardStatsGrid(
                 }.into_any(),
                 Err(e) => view! {
                     <MessageBar intent=MessageBarIntent::Error>
-                        "Couldn't load the numbers. " {e.to_string()}
+                        {format!("Couldn't load the numbers. {}", crate::errors::friendly_error(&e).sentence())}
                     </MessageBar>
                 }.into_any(),
             })}

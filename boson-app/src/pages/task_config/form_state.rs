@@ -224,7 +224,9 @@ impl TaskConfigFormState {
                         form.populate(&c);
                         form.saved.set(true);
                     }
-                    Err(e) => form.save_error.set(Some(e.to_string())),
+                    Err(e) => form
+                        .save_error
+                        .set(Some(crate::errors::friendly_error(&e).sentence())),
                 }
             });
         })

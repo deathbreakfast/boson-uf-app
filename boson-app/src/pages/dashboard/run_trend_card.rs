@@ -123,7 +123,7 @@ pub fn BosonRunTrendCard() -> impl IntoView {
                                     }.into_any(),
                                     Err(e) => view! {
                                         <MessageBar intent=MessageBarIntent::Error>
-                                            "Couldn't load the chart. " {e.to_string()}
+                                            {format!("Couldn't load the chart. {}", crate::errors::friendly_error(&e).sentence())}
                                         </MessageBar>
                                     }.into_any(),
                                 })}

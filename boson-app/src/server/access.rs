@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use leptos::prelude::ServerFnError;
-use uf_product::access::{ResourceAccessBackend, ResourceRef};
+use uf_product::access::{PrincipalKind, PrincipalRef, ResourceAccessBackend, ResourceRef};
 
 use crate::permissions::{access_label, queue_ref, task_type_ref, NO_ACCESS};
 
@@ -167,4 +167,128 @@ pub(super) fn redact_queue(queue: &mut QueueSummary) {
     queue.added_last_hour = 0;
     queue.paused_by = None;
     queue.paused_at = None;
+}
+
+/// What the reader's teams own and who owns each row, read once per request.
+///
+/// "Yours" comes from [`ResourceAccessBackend::owned_by`] for the session actor: Owner or Can
+/// edit through the reader or a team or group they're in, leaving out the admin group's
+/// default ownership. A host with no access backend owns nothing, so its lists keep their
+/// usual order. Owner labels are the rows that count as owners, else the admins' default.
+pub(super) struct Ownership {
+    backend: Option<Arc<dyn ResourceAccessBackend>>,
+    owned: HashMap<&'static str, Vec<String>>,
+    owners: HashMap<(String, String), (String, Vec<String>)>,
+}
+
+impl Ownership {
+    /// Ownership answers from the request's backend.
+    pub(super) fn from_context() -> Self {
+        Self {
+            backend: uf_product::access::use_resource_access_backend(),
+            owned: HashMap::new(),
+            owners: HashMap::new(),
+        }
+    }
+
+    /// Ids of `kind` the reader's teams own; empty when the backend can't say.
+    pub(super) async fn owned(&mut self, kind: &'static str) -> Vec<String> {
+        if let Some(ids) = self.owned.get(kind) {
+            return ids.clone();
+        }
+        let ids = match (&self.backend, session_principal().await) {
+            (Some(backend), Some(actor)) => match backend.owned_by(&actor, kind).await {
+                Ok(ids) => ids,
+                Err(e) => {
+                    tracing::warn!(kind, error = %e, "boson owned_by failed");
+                    Vec::new()
+                }
+            },
+            _ => Vec::new(),
+        };
+        self.owned.insert(kind, ids.clone());
+        ids
+    }
+
+    /// The owner label of one resource and the team names behind it.
+    async fn owners_of(&mut self, resource: &ResourceRef) -> (String, Vec<String>) {
+        let key = (resource.kind.clone(), resource.id.clone());
+        if let Some(found) = self.owners.get(&key) {
+            return found.clone();
+        }
+        let entries = match &self.backend {
+            Some(backend) => backend
+                .access(resource)
+                .await
+                .map_or_else(|_| Vec::new(), |view| view.entries),
+            None => Vec::new(),
+        };
+        let owners: Vec<&uf_product::access::AccessEntry> =
+            entries.iter().filter(|e| e.counts_as_owned()).collect();
+        let label = if owners.is_empty() {
+            boson_backend::DEFAULT_OWNER_LABEL.to_string()
+        } else {
+            owners
+                .iter()
+                .map(|e| e.principal.label.clone())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let teams = owners
+            .iter()
+            .filter(|e| e.principal.kind != PrincipalKind::User)
+            .map(|e| e.principal.label.clone())
+            .collect();
+        let found = (label, teams);
+        self.owners.insert(key, found.clone());
+        found
+    }
+
+    /// Owner label of a task type ("Media platform", or the admins' default).
+    pub(super) async fn task_type_owner(&mut self, task_name: &str) -> String {
+        self.owners_of(&task_type_ref(task_name)).await.0
+    }
+
+    /// Owner label of a queue.
+    pub(super) async fn queue_owner(&mut self, queue_name: &str) -> String {
+        self.owners_of(&queue_ref(queue_name)).await.0
+    }
+
+    /// What the reader's teams own of `kind`, with the team names for the list caption.
+    pub(super) async fn list_ownership(
+        &mut self,
+        kind: &'static str,
+    ) -> super::types::ListOwnership {
+        let owned = self.owned(kind).await;
+        let mut teams: Vec<String> = Vec::new();
+        for id in &owned {
+            let resource = if kind == crate::permissions::BOSON_QUEUE_KIND {
+                queue_ref(id)
+            } else {
+                task_type_ref(id)
+            };
+            let (_, names) = self.owners_of(&resource).await;
+            for name in names {
+                if !teams.contains(&name) {
+                    teams.push(name);
+                }
+            }
+        }
+        if teams.is_empty() && !owned.is_empty() {
+            teams.push("you".to_string());
+        }
+        super::types::ListOwnership { owned, teams }
+    }
+}
+
+/// The session actor as an access principal; `None` without a session.
+async fn session_principal() -> Option<PrincipalRef> {
+    let ctx = higgs::Higgs::from_request().await.ok()?;
+    let id = ctx.session_user_id()?;
+    let id = id.strip_prefix("user:").unwrap_or(id).to_string();
+    Some(PrincipalRef {
+        kind: PrincipalKind::User,
+        label: id.clone(),
+        id,
+    })
 }

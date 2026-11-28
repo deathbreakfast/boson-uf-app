@@ -5,16 +5,18 @@ use axum::Json;
 use serde::Deserialize;
 
 use crate::e2e_valence::{
-    approve_pending_requests, e2e_fixtures, refresh_queue_job, reset_requester_access,
-    seed_failed_job, seed_failed_jobs, seed_filter_runs, seed_limited_task, seed_ops,
-    seed_paging_jobs, store_fixtures, OpsSeed, E2E_LIMITED_ACTIVE, E2E_LIMITED_TASK_NAME,
+    approve_pending_requests, e2e_fixtures, media_queue_edit, refresh_queue_job,
+    reset_requester_access, seed_failed_job, seed_failed_jobs, seed_filter_runs, seed_limited_task,
+    seed_ops, seed_paging_jobs, seed_yours_first, store_fixtures, OpsSeed, E2E_INVOICE_TASK_NAME,
+    E2E_LIMITED_ACTIVE, E2E_LIMITED_TASK_NAME, E2E_MEDIA_POOL, E2E_MEDIA_TASK_NAME,
     E2E_SETTINGS_TASK_NAME,
 };
 use crate::gate_demos::{write_e2e_auth_kind, E2eAuthKind};
 
 #[derive(Debug, Deserialize)]
 pub struct SeedRequest {
-    /// `anonymous` | `admin` | `outsider` | `unverified` | `runner` | `requester`
+    /// `anonymous` | `admin` | `outsider` | `unverified` | `runner` | `requester` | `kenji` |
+    /// `ada`
     #[serde(default = "default_auth")]
     pub auth: String,
     /// When true, enqueue a fresh queued job for cancel specs.
@@ -45,6 +47,16 @@ pub struct SeedRequest {
     /// When true, take back the requester's access to the settings task type first.
     #[serde(default)]
     pub reset_requester: bool,
+    /// When true, upsert the jobs and runs of the two team-owned task types.
+    #[serde(default)]
+    pub yours_first: bool,
+    /// When set, make Runs and Jobs loads filtered to this task type fail until the next seed
+    /// call (an empty string turns it off).
+    #[serde(default)]
+    pub fail_list_loads: Option<String>,
+    /// When set, give (`true`) or take back (`false`) the media team's Can edit on its queue.
+    #[serde(default)]
+    pub media_queue_edit: Option<bool>,
 }
 
 fn default_auth() -> String {
@@ -66,7 +78,9 @@ pub async fn seed_data(
         E2eAuthKind::Admin
         | E2eAuthKind::Outsider
         | E2eAuthKind::Runner
-        | E2eAuthKind::Requester => {
+        | E2eAuthKind::Requester
+        | E2eAuthKind::Kenji
+        | E2eAuthKind::Ada => {
             boson_app::e2e_lab::set_email_verified_override(Some(true));
         }
         E2eAuthKind::Unverified => {
@@ -77,6 +91,21 @@ pub async fn seed_data(
     if body.reset_requester {
         reset_requester_access().await.map_err(|e| {
             log::error!("seed reset_requester failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    }
+
+    // A seed call without `fail_list_loads` turns the failure off, so no spec leaks it.
+    boson_app::e2e_lab::set_fail_list_loads(body.fail_list_loads.clone().filter(|t| !t.is_empty()));
+    if let Some(edit) = body.media_queue_edit {
+        media_queue_edit(edit).await.map_err(|e| {
+            log::error!("seed media_queue_edit failed: {e:#}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    }
+    if body.yours_first {
+        seed_yours_first().await.map_err(|e| {
+            log::error!("seed yours_first failed: {e:#}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
     }
@@ -162,6 +191,9 @@ pub async fn seed_data(
             "settings_task": E2E_SETTINGS_TASK_NAME,
             "limited_task": E2E_LIMITED_TASK_NAME,
             "limited_active": E2E_LIMITED_ACTIVE,
+            "media_task": E2E_MEDIA_TASK_NAME,
+            "invoice_task": E2E_INVOICE_TASK_NAME,
+            "media_pool": E2E_MEDIA_POOL,
         }
     })))
 }

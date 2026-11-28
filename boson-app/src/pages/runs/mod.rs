@@ -1,5 +1,6 @@
 use crate::components::{
-    boson_table_page_layout, BosonCardContent, RunsDataTable, RunsFilters, RunsTableScope,
+    boson_table_page_layout, BosonCardContent, ListHeader, OwnedKind, RunsDataTable, RunsFilters,
+    RunsTableScope,
 };
 use crate::server::list_task_names;
 use leptos::prelude::*;
@@ -21,6 +22,37 @@ fn use_task_names() -> Signal<Vec<String>> {
         });
     });
     task_names.into()
+}
+
+/// "Filtered by job: <id>" with Clear, when the page shows one job's runs.
+#[component]
+fn JobFilterChip(job_filter: Memo<Option<String>>) -> impl IntoView {
+    let navigate = use_navigate();
+    let navigate_store = StoredValue::new(navigate);
+    view! {
+                {move || job_filter.get().map(|job_id| {
+                    view! {
+                        <div data-testid="runs-job-filter-chip">
+                            <Flex align=FlexAlign::Center gap=SpacingSize::Size80.flex_gap()>
+                                <Caption1>"Filtered by job:"</Caption1>
+                                <Tag>{job_id}</Tag>
+                                <Button
+                                    size=ButtonSize::Small
+                                    appearance=ButtonAppearance::Subtle
+                                    on_click=Callback::new({
+                                        let nav = navigate_store.with_value(Clone::clone);
+                                        move |_| {
+                                            nav(crate::paths::RUNS, NavigateOptions::default());
+                                        }
+                                    })
+                                >
+                                    "Clear"
+                                </Button>
+                            </Flex>
+                        </div>
+                    }
+                })}
+    }
 }
 
 /// Run history index: paginated list of past runs across all tasks.
@@ -49,6 +81,7 @@ pub fn BosonRunsIndexPage() -> impl IntoView {
                 q.get("task"),
                 q.get("from"),
                 q.get("to"),
+                q.get("show"),
                 scoped,
             )
         })
@@ -75,6 +108,13 @@ pub fn BosonRunsIndexPage() -> impl IntoView {
     });
 
     let task_names = use_task_names();
+    let show = Signal::derive(move || filters.get().show);
+    let on_show_change = Callback::new(move |mode| {
+        on_filters_change.run(RunsFilters {
+            show: mode,
+            ..filters.get_untracked()
+        });
+    });
 
     let empty_description = Memo::new(move |_| {
         if job_filter.get().is_some() {
@@ -93,29 +133,9 @@ pub fn BosonRunsIndexPage() -> impl IntoView {
         <ContentContainer class=page_classes.page data_testid="boson-runs">
             <Flex vertical=true gap=SpacingSize::Size240.flex_gap() class=page_classes.body>
                 <Title3>"Runs"</Title3>
+                <ListHeader kind=OwnedKind::TaskTypes mode=show on_change=on_show_change />
 
-                {move || job_filter.get().map(|job_id| {
-                    view! {
-                        <div data-testid="runs-job-filter-chip">
-                            <Flex align=FlexAlign::Center gap=SpacingSize::Size80.flex_gap()>
-                                <Caption1>"Filtered by job:"</Caption1>
-                                <Tag>{job_id}</Tag>
-                                <Button
-                                    size=ButtonSize::Small
-                                    appearance=ButtonAppearance::Subtle
-                                    on_click=Callback::new({
-                                        let nav = navigate_store.with_value(Clone::clone);
-                                        move |_| {
-                                            nav(crate::paths::RUNS, NavigateOptions::default());
-                                        }
-                                    })
-                                >
-                                    "Clear"
-                                </Button>
-                            </Flex>
-                        </div>
-                    }
-                })}
+                <JobFilterChip job_filter=job_filter />
 
                 // Rebuilt only when the job scope changes; filter changes reload rows in place.
                 {move || {

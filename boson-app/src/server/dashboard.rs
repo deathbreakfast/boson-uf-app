@@ -167,12 +167,25 @@ pub async fn get_needs_attention() -> Result<Vec<NeedsAttentionLine>, ServerFnEr
             });
         }
         let tasks = load_task_failure_stats(backend, now).await?;
-        Ok(boson_backend::needs_attention_lines(
-            &pools,
-            &failed_jobs,
-            &tasks,
-            now,
-        ))
+        let mut lines = boson_backend::needs_attention_lines(&pools, &failed_jobs, &tasks, now);
+        let mut ownership = super::access::Ownership::from_context();
+        let owned_tasks = ownership
+            .owned(crate::permissions::BOSON_TASK_TYPE_KIND)
+            .await;
+        let owned_queues = ownership.owned(crate::permissions::BOSON_QUEUE_KIND).await;
+        for line in &mut lines {
+            if let Some(task) = line.task.clone() {
+                line.yours = owned_tasks.contains(&task);
+                line.owner = ownership.task_type_owner(&task).await;
+            } else if let Some(queue) = line.queue.clone() {
+                line.yours = owned_queues.contains(&queue);
+                line.owner = ownership.queue_owner(&queue).await;
+            }
+        }
+        // The panel splits into Your teams and Other teams; keep each part worst first.
+        let (mut mine, rest): (Vec<_>, Vec<_>) = lines.into_iter().partition(|l| l.yours);
+        mine.extend(rest);
+        Ok(mine)
     }
     .await;
     #[cfg(feature = "ssr")]
@@ -192,13 +205,24 @@ pub async fn get_failing_most() -> Result<Vec<FailingTaskRow>, ServerFnError> {
         let backend = super::helpers::boson_backend()?;
         let tasks = load_task_failure_stats(backend.as_ref(), chrono::Utc::now()).await?;
         let mut access = super::access::ReaderAccess::from_context();
+        let mut ownership = super::access::Ownership::from_context();
+        let owned = ownership
+            .owned(crate::permissions::BOSON_TASK_TYPE_KIND)
+            .await;
         let mut rows = Vec::new();
-        for row in boson_backend::failing_most_rows(&tasks) {
+        for mut row in boson_backend::failing_most_rows(&tasks) {
             if access.task_type(&row.task, "View").await {
+                row.yours = owned.contains(&row.task);
+                row.owner = ownership.task_type_owner(&row.task).await;
                 rows.push(row);
             }
         }
-        Ok(rows)
+        Ok(boson_backend::order_owned(
+            rows,
+            &owned,
+            boson_backend::ShowMode::YoursFirst,
+            |r| r.task.as_str(),
+        ))
     }
     .await;
     #[cfg(feature = "ssr")]

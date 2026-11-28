@@ -61,6 +61,10 @@ pub struct TaskSummary {
     /// owner from the task type's Access settings.
     #[serde(default)]
     pub owner: Option<String>,
+    /// Whether the reader's teams own the task type (Owner or Can edit, not the admins'
+    /// default ownership); "yours first" lists sort these rows first.
+    #[serde(default)]
+    pub yours: bool,
     /// The reader's role on the task type ("Owner", "Can run", "No access"), empty when the
     /// endpoint doesn't check it. Rows with "No access" carry no numbers.
     #[serde(default)]
@@ -97,6 +101,12 @@ pub struct JobSummary {
     /// Whether the reader holds Run on the job's task type (Cancel, Retry, Drop).
     #[serde(default)]
     pub can_run: bool,
+    /// Owner label of the job's task type, when the server looked it up.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// Whether the reader's teams own the job's task type.
+    #[serde(default)]
+    pub yours: bool,
 }
 
 /// Summary of a Boson run for history / detail views.
@@ -122,6 +132,12 @@ pub struct RunSummary {
     pub error_message: Option<String>,
     /// Most attempts the task type's current retry policy allows, when the server looked it up.
     pub max_attempts: Option<u32>,
+    /// Owner label of the run's task type, when the server looked it up.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// Whether the reader's teams own the run's task type.
+    #[serde(default)]
+    pub yours: bool,
 }
 
 /// A failed job that the `retry_jobs` server fn started again.
@@ -377,4 +393,13 @@ pub const MAX_PAGE_LIST_LIMIT: u32 = 100;
 #[must_use]
 pub fn clamp_page_list_limit(limit: u32) -> u32 {
     limit.min(MAX_PAGE_LIST_LIMIT)
+}
+
+/// What the reader's teams own of one resource kind, for a list's "yours first" caption.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListOwnership {
+    /// Ids (task names or queue names) the reader's teams own.
+    pub owned: Vec<String>,
+    /// Teams (or "you") behind those rows, for the caption; empty when nothing is owned.
+    pub teams: Vec<String>,
 }

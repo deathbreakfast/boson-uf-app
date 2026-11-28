@@ -4,7 +4,7 @@ use leptos::prelude::*;
 use orbital::primitives::{DataTableColumnDef, Link};
 use orbital_data::DataRecord;
 
-use crate::components::{success_rate_help, AccessBadge, BosonHelpColumnHeader};
+use crate::components::{owner_column, success_rate_help, AccessBadge, BosonHelpColumnHeader};
 
 use super::mapper::record_to_task_name;
 
@@ -39,7 +39,7 @@ pub fn tasks_table_columns() -> Vec<DataTableColumnDef> {
         DataTableColumnDef::new("name", "Task")
             .with_sortable(false)
             .with_cell_view(name_view),
-        DataTableColumnDef::new("owner", "Owner").with_sortable(false),
+        owner_column(),
         DataTableColumnDef::new("queue", "Queue").with_sortable(false),
         DataTableColumnDef::new("jobs_queued", "Waiting").with_sortable(false),
         DataTableColumnDef::new("runs_total", "Runs").with_sortable(false),

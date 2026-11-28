@@ -3,8 +3,10 @@
 //! `list_runs_datatable_page` reads one page at a time with the coordinator's keyset read
 //! (`list_runs_after`) and a [`boson_core::RunFilter`] built from the request, so every filter
 //! applies in the backend at any history size. The first page also returns
-//! `count_runs_matching` as the total. A request past the first page whose cursor doesn't fit
-//! the query walks forward to its offset by keyset, then hands out cursors again.
+//! `count_runs_matching` as the total. The `show` rule puts runs of task types the reader's
+//! teams own first ([`boson_backend::scan_parts`]); the cursor names the part as well as the
+//! key, so paging keeps that order. A request past the first page whose cursor doesn't fit the
+//! query walks forward to its offset by keyset, then hands out cursors again.
 //! `list_runs_page` pages by offset.
 //!
 //! Access is per task type, as the session actor. The lists show every run but leave out the
@@ -17,7 +19,7 @@ use orbital_paging::{Page, PageRequest};
 #[cfg(feature = "ssr")]
 use super::helpers::{require_session, run_to_summary, trace_server_result};
 #[cfg(feature = "ssr")]
-use super::types::{clamp_page_list_limit, MAX_PAGE_LIST_LIMIT};
+use super::types::clamp_page_list_limit;
 use super::types::{RunDetail, RunSummary};
 
 /// Blank the error text on runs of task types the reader can't View (it can hold URLs,
@@ -78,28 +80,28 @@ pub async fn list_runs_page(
     result
 }
 
-/// Key of the run just before `offset` in `filter`'s order, read forward by keyset.
-///
-/// Serves a page whose cursor doesn't fit the query; `None` when `offset` is 0.
+/// Total for a runs list: every match, or under Only yours the matches of each owned task
+/// type added up. `None` when the backend can't count.
 #[cfg(feature = "ssr")]
-async fn run_key_at_offset(
+async fn count_owned_runs(
     backend: &dyn boson_coordinator::BosonCoordinatorBackend,
     filter: &boson_core::RunFilter,
-    offset: usize,
-) -> Option<boson_core::RunKey> {
-    let mut key: Option<boson_core::RunKey> = None;
-    let mut left = offset;
-    while left > 0 {
-        let chunk = left.min(MAX_PAGE_LIST_LIMIT as usize);
-        let rows = backend.list_runs_after(filter, key.as_ref(), chunk).await;
-        let Some(last) = rows.last() else { break };
-        key = Some(boson_core::RunKey::from(last));
-        left -= rows.len();
-        if rows.len() < chunk {
-            break;
-        }
+    mode: boson_backend::ShowMode,
+    owned: &[String],
+) -> Option<u64> {
+    if mode != boson_backend::ShowMode::OnlyYours || owned.is_empty() {
+        return backend.count_runs_matching(filter).await.ok();
     }
-    key
+    let mut total = 0u64;
+    for task in owned {
+        if filter.task.as_ref().is_some_and(|t| t != task) {
+            continue;
+        }
+        let mut one = filter.clone();
+        one.task = Some(task.clone());
+        total += backend.count_runs_matching(&one).await.ok()?;
+    }
+    Some(total)
 }
 
 /// Paginated runs for DataTable, filtered and paged in the backend by keyset cursor.
@@ -115,7 +117,7 @@ pub async fn list_runs_datatable_page(
     scope_job_id: Option<String>,
 ) -> Result<Page<RunSummary>, ServerFnError> {
     let result = async {
-        use boson_backend::ListStart;
+        use boson_backend::{PartKey, PartStart};
 
         let ctx = higgs::Higgs::from_request().await?;
         require_session(&ctx)?;
@@ -126,6 +128,11 @@ pub async fn list_runs_datatable_page(
         if let Some(ref job_id) = filter.job_id {
             boson_backend::validate_job_id(job_id)
                 .map_err(|e| ServerFnError::new(e.to_string()))?;
+        }
+        if crate::e2e_lab::list_load_fails(filter.task.as_deref()) {
+            return Err(ServerFnError::new(
+                "Failed to list runs: coordinator unavailable",
+            ));
         }
         if let Some(task) = filter.task.as_deref() {
             super::access::require_task_type(task, "View").await?;
@@ -144,32 +151,56 @@ pub async fn list_runs_datatable_page(
             }
         }
 
-        let key = match boson_backend::runs_list_start(&request, scope) {
-            ListStart::After(key) => key,
-            ListStart::Offset(offset) => run_key_at_offset(backend, &filter, offset).await,
-        };
-        let rows = backend
-            .list_runs_after(&filter, key.as_ref(), (limit + 1) as usize)
+        let mut ownership = super::access::Ownership::from_context();
+        let owned = ownership
+            .owned(crate::permissions::BOSON_TASK_TYPE_KIND)
             .await;
+        let mode = boson_backend::ShowMode::from_request(&request);
+        let is_owned = |r: &boson_core::Run| owned.contains(&r.task_name);
+        let key_of = |r: &boson_core::Run| boson_core::RunKey::from(r);
+        let read = |_part, after: Option<boson_core::RunKey>, n| {
+            let filter = &filter;
+            async move { backend.list_runs_after(filter, after.as_ref(), n).await }
+        };
+        let start = match boson_backend::runs_part_start(&request, scope, mode, !owned.is_empty()) {
+            PartStart::At(at) => Some(at),
+            // No cursor fits: walk forward to the offset, then page from there.
+            PartStart::Offset(offset) => {
+                let first = PartKey {
+                    part: boson_backend::ScanPart::first(mode, !owned.is_empty()),
+                    key: None,
+                };
+                boson_backend::scan_parts(first, mode, offset, is_owned, key_of, read)
+                    .await
+                    .resume
+            }
+        };
+        let scan = match start {
+            Some(at) => {
+                boson_backend::scan_parts(at, mode, limit as usize, is_owned, key_of, read).await
+            }
+            None => boson_backend::PartScan {
+                rows: Vec::new(),
+                resume: None,
+            },
+        };
         // Count on the first page only; cursor pages report `None`.
         let total_count = if request.is_first_page() {
-            backend.count_runs_matching(&filter).await.ok()
+            count_owned_runs(backend, &filter, mode, &owned).await
         } else {
             None
         };
-        let mut page = boson_backend::runs_page_from_rows(
-            rows,
-            &request,
-            scope,
-            limit,
-            &ListStart::After(key),
-            total_count,
-        );
+        let mut page =
+            boson_backend::runs_page_from_scan(scan, &request, scope, limit, total_count);
         super::jobs::fill_max_attempts(backend, &mut page.items, |r| {
             (r.task_name.as_str(), &mut r.max_attempts)
         })
         .await;
         hide_run_errors(&mut page.items).await;
+        for run in &mut page.items {
+            run.yours = owned.contains(&run.task_name);
+            run.owner = Some(ownership.task_type_owner(&run.task_name).await);
+        }
         Ok(page)
     }
     .await;

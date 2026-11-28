@@ -88,3 +88,25 @@ test.describe("pw-boson-jobs", () => {
     ).toBe(true);
   });
 });
+
+test.describe("pw-boson-jobs-phone", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("pw-boson-jobs-phone-width-fits", async ({ page }) => {
+    test.setTimeout(90_000);
+    await seedAuth(page, "kenji", { yoursFirst: true });
+    await page.goto("/boson/jobs", { waitUntil: "domcontentloaded" });
+    await waitForHydrated(page);
+    const table = page.getByTestId("boson-jobs-data-table");
+    await expect(table.locator('[data-testid^="job-card-e2e-yf-media-"]').first()).toBeAttached({
+      timeout: 60_000,
+    });
+    await expect(page.getByTestId("boson-list-caption")).toContainText("Media platform");
+    await expect(page.getByTestId("boson-show-select")).toBeVisible();
+    // The page itself doesn't scroll sideways; a wide table scrolls inside its card.
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+});

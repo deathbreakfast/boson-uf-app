@@ -63,7 +63,7 @@ pub fn PurgeDialog(
                     open.set(false);
                     on_purged.run(());
                 }
-                Err(e) => error.set(Some(e.to_string())),
+                Err(e) => error.set(Some(crate::errors::friendly_error(&e).sentence())),
             }
             busy.set(false);
         });

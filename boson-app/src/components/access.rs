@@ -2,9 +2,10 @@
 //! a server error that names a missing action.
 
 use leptos::prelude::*;
-use orbital::primitives::{Badge, BadgeAppearance, BadgeColor, MessageBar, MessageBarIntent};
+use orbital::primitives::{Badge, BadgeAppearance, BadgeColor};
 use uf_product::access::AccessDenied;
 
+use crate::errors::{friendly_error, FriendlyErrorBar};
 use crate::permissions::{denied_resource, NO_ACCESS};
 
 /// Badge for the reader's role on one task type or queue ("Owner", "Can run", "No access").
@@ -25,7 +26,7 @@ pub fn AccessBadge(
 }
 
 /// [`AccessDenied`] when the error is a missing action on a task type or queue, otherwise the
-/// error in a `MessageBar`.
+/// error in words ([`friendly_error`]).
 ///
 /// `purpose` says what the action would let the reader do here ("see this queue's jobs").
 pub fn server_fn_error_or_denied(error: &ServerFnError, purpose: &str) -> AnyView {
@@ -35,7 +36,6 @@ pub fn server_fn_error_or_denied(error: &ServerFnError, purpose: &str) -> AnyVie
         }
         .into_any()
     } else {
-        let message = error.to_string();
-        view! { <MessageBar intent=MessageBarIntent::Error>{message}</MessageBar> }.into_any()
+        view! { <FriendlyErrorBar error=friendly_error(error) /> }.into_any()
     }
 }

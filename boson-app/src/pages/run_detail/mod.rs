@@ -110,7 +110,7 @@ fn RunActions(
                 pending.set(false);
                 match result {
                     Ok(()) => on_changed.run(()),
-                    Err(e) => action_error.set(Some(e.to_string())),
+                    Err(e) => action_error.set(Some(crate::errors::friendly_error(&e).sentence())),
                 }
             });
         });
@@ -159,7 +159,7 @@ fn RunActions(
                     Some(r) => retried.set(Some(r.job_id)),
                     None => action_error.set(Some(outcome_error(&outcome.failed, "retry"))),
                 },
-                Err(e) => action_error.set(Some(e.to_string())),
+                Err(e) => action_error.set(Some(crate::errors::friendly_error(&e).sentence())),
             }
         });
     });
@@ -176,7 +176,7 @@ fn RunActions(
             match result {
                 Ok(outcome) if !outcome.dropped.is_empty() => dropped.set(true),
                 Ok(outcome) => action_error.set(Some(outcome_error(&outcome.failed, "drop"))),
-                Err(e) => action_error.set(Some(e.to_string())),
+                Err(e) => action_error.set(Some(crate::errors::friendly_error(&e).sentence())),
             }
         });
     });

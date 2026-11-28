@@ -18,6 +18,10 @@ pub const E2E_UNVERIFIED_USER: &str = "user:unverified";
 pub const E2E_RUNNER_USER: &str = "user:runner";
 #[cfg(feature = "ssr")]
 pub const E2E_REQUESTER_USER: &str = "user:requester";
+#[cfg(feature = "ssr")]
+pub const E2E_KENJI_USER: &str = "user:kenji";
+#[cfg(feature = "ssr")]
+pub const E2E_ADA_USER: &str = "user:ada";
 
 /// Session kinds for Playwright seed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +38,10 @@ pub enum E2eAuthKind {
     Runner,
     /// Verified user with no access, who asks for it in the request spec.
     Requester,
+    /// Kenji, on the Media platform team, which owns the media task type and queue.
+    Kenji,
+    /// Ada, on the Billing engineering team, which owns the invoice task type.
+    Ada,
 }
 
 impl E2eAuthKind {
@@ -45,6 +53,8 @@ impl E2eAuthKind {
             Self::Unverified => "unverified",
             Self::Runner => "runner",
             Self::Requester => "requester",
+            Self::Kenji => "kenji",
+            Self::Ada => "ada",
         }
     }
 
@@ -55,6 +65,8 @@ impl E2eAuthKind {
             "unverified" | "authenticated_unverified" => Self::Unverified,
             "runner" => Self::Runner,
             "requester" => Self::Requester,
+            "kenji" => Self::Kenji,
+            "ada" => Self::Ada,
             _ => Self::Anonymous,
         }
     }
@@ -68,6 +80,8 @@ impl E2eAuthKind {
             Self::Unverified => Some(E2E_UNVERIFIED_USER),
             Self::Runner => Some(E2E_RUNNER_USER),
             Self::Requester => Some(E2E_REQUESTER_USER),
+            Self::Kenji => Some(E2E_KENJI_USER),
+            Self::Ada => Some(E2E_ADA_USER),
         }
     }
 
@@ -110,6 +124,22 @@ impl E2eAuthKind {
                 user_id: "requester".into(),
                 email: Some("requester@example.com".into()),
                 display_name: Some("Requester".into()),
+                avatar_url: None,
+                roles: vec!["user".into()],
+                email_verified: true,
+            }),
+            Self::Kenji => AuthSession::Authenticated(AuthenticatedUser {
+                user_id: "kenji".into(),
+                email: Some("kenji@example.com".into()),
+                display_name: Some("Kenji Watanabe".into()),
+                avatar_url: None,
+                roles: vec!["user".into()],
+                email_verified: true,
+            }),
+            Self::Ada => AuthSession::Authenticated(AuthenticatedUser {
+                user_id: "ada".into(),
+                email: Some("ada@example.com".into()),
+                display_name: Some("Ada Mensah".into()),
                 avatar_url: None,
                 roles: vec!["user".into()],
                 email_verified: true,
