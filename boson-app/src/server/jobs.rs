@@ -160,14 +160,20 @@ pub async fn retry_jobs(
         let backend = backend.as_ref();
         let mut outcome = JobActionOutcome::default();
         for from_job_id in job_ids {
-            if let Some(task_name) = job_task_name(backend, &from_job_id).await {
-                if authorize_job_action(&task_name, JobAction::Retry)
-                    .await
-                    .is_err()
-                {
-                    outcome.failed.push(denied_failure(from_job_id, &task_name));
-                    continue;
-                }
+            // Fail closed: a job we can't find has no task type to check.
+            let Some(task_name) = job_task_name(backend, &from_job_id).await else {
+                outcome.failed.push(JobActionFailure {
+                    job_id: from_job_id,
+                    error: "it no longer exists".to_string(),
+                });
+                continue;
+            };
+            if authorize_job_action(&task_name, JobAction::Retry)
+                .await
+                .is_err()
+            {
+                outcome.failed.push(denied_failure(from_job_id, &task_name));
+                continue;
             }
             match backend.retry_job(&from_job_id, actor_json.clone()).await {
                 Ok(job_id) => {
@@ -212,14 +218,20 @@ pub async fn drop_jobs(
         let backend = backend.as_ref();
         let mut outcome = JobActionOutcome::default();
         for job_id in job_ids {
-            if let Some(task_name) = job_task_name(backend, &job_id).await {
-                if authorize_job_action(&task_name, JobAction::Drop)
-                    .await
-                    .is_err()
-                {
-                    outcome.failed.push(denied_failure(job_id, &task_name));
-                    continue;
-                }
+            // Fail closed: a job we can't find has no task type to check.
+            let Some(task_name) = job_task_name(backend, &job_id).await else {
+                outcome.failed.push(JobActionFailure {
+                    job_id,
+                    error: "it no longer exists".to_string(),
+                });
+                continue;
+            };
+            if authorize_job_action(&task_name, JobAction::Drop)
+                .await
+                .is_err()
+            {
+                outcome.failed.push(denied_failure(job_id, &task_name));
+                continue;
             }
             match backend.drop_failed_job(&job_id).await {
                 Ok(()) => outcome.dropped.push(job_id),
