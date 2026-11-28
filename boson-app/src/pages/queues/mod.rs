@@ -9,18 +9,18 @@ pub use detail::BosonQueueDetailPage;
 use std::sync::Arc;
 
 use leptos::prelude::*;
-use orbital::components::{
-    Caption1, Card, ContentContainer, EmptyState, SpacingSize, Subtitle2, Title3,
-};
+use orbital::components::{Card, ContentContainer, EmptyState, SpacingSize, Subtitle2, Title3};
 use orbital::primitives::{
-    Badge, BadgeAppearance, BadgeColor, Button, ButtonAppearance, DataRecord, DataTable,
-    DataTableColumnDef, DataTableEmptyView, DataTableFeatures, DataTableLoadingView,
-    DataTableRowModel, DataTableSource, Flex, Link, MessageBar, MessageBarIntent, PagingMode,
+    Badge, BadgeAppearance, BadgeColor, DataRecord, DataTable, DataTableColumnDef,
+    DataTableEmptyView, DataTableFeatures, DataTableLoadingView, DataTableRowModel,
+    DataTableSource, Flex, Link, PagingMode,
 };
 
 use crate::components::{
-    no_toolbar, row_model, text_cell, AccessBadge, BosonCardContent, BosonDataTableRefetchSkeleton,
+    no_toolbar, owner_column, row_model, text_cell, use_show_mode, AccessBadge, BosonCardContent,
+    BosonDataTableRefetchSkeleton, ListHeader, OwnedKind, TableLoadError,
 };
+use crate::errors::friendly_error;
 use crate::live::use_boson_poll_tick;
 use crate::permissions::NO_ACCESS;
 use crate::server::{list_queues, QueueStateDto, QueueSummary};
@@ -79,7 +79,7 @@ fn columns() -> Vec<DataTableColumnDef> {
         DataTableColumnDef::new("name", "Queue")
             .with_sortable(false)
             .with_cell_view(name_view),
-        DataTableColumnDef::new("owner", "Owner").with_sortable(false),
+        owner_column(),
         DataTableColumnDef::new("state", "State")
             .with_sortable(false)
             .with_cell_view(state_view),
@@ -108,6 +108,7 @@ fn rows(queues: &[QueueSummary]) -> Vec<DataTableRowModel> {
                 &[
                     ("name", q.name.clone()),
                     ("owner", q.owner.clone()),
+                    ("yours", if q.yours { "yes" } else { "" }.to_string()),
                     ("state", state_key(q.state).to_string()),
                     ("waiting", number(q.waiting.to_string())),
                     ("running", number(q.running.to_string())),
@@ -163,7 +164,11 @@ fn QueuesTable(
 #[component]
 pub fn BosonQueuesPage() -> impl IntoView {
     let poll_tick = use_boson_poll_tick();
-    let queues_res = Resource::new(|| (), |()| async move { list_queues().await });
+    let (show, on_show_change) = use_show_mode();
+    let queues_res = Resource::new(
+        move || show.get(),
+        |mode| async move { list_queues(Some(mode.key().to_string())).await },
+    );
 
     Effect::new(move |_| {
         if poll_tick.get() > 0 {
@@ -180,6 +185,7 @@ pub fn BosonQueuesPage() -> impl IntoView {
                         "Each queue is a Gluon pool. Falling behind means jobs arrive faster than they finish."
                     </Subtitle2>
                 </Flex>
+                <ListHeader kind=OwnedKind::Queues mode=show on_change=on_show_change />
                 <Card>
                     <BosonCardContent>
                         <div data-testid="boson-queues-table">
@@ -187,17 +193,13 @@ pub fn BosonQueuesPage() -> impl IntoView {
                                 {move || queues_res.get().map(|r| match r {
                                     Ok(queues) => view! { <QueuesTable queues=queues loading=false /> }.into_any(),
                                     Err(e) => view! {
-                                        <MessageBar intent=MessageBarIntent::Error>
-                                            <Flex vertical=true gap=SpacingSize::Size80.flex_gap()>
-                                                <Caption1>{format!("Couldn't load queues. {e}")}</Caption1>
-                                                <Button
-                                                    appearance=ButtonAppearance::Secondary
-                                                    on:click=move |_| queues_res.refetch()
-                                                >
-                                                    "Try again"
-                                                </Button>
-                                            </Flex>
-                                        </MessageBar>
+                                        <TableLoadError
+                                            error=RwSignal::new(Some(friendly_error(&e)))
+                                            noun="queues"
+                                            on_retry=Callback::new(move |()| queues_res.refetch())
+                                        >
+                                            ""
+                                        </TableLoadError>
                                     }.into_any(),
                                 })}
                             </Transition>

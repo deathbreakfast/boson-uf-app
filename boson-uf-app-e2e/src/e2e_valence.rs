@@ -59,6 +59,15 @@ pub const E2E_SETTINGS_TASK_NAME: &str = "e2e_settings";
 /// Task type the Limits spec fills to its "most at once" limit.
 pub const E2E_LIMITED_TASK_NAME: &str = "e2e_limited";
 
+/// Task type the Media platform team owns (Can edit), for the "yours first" specs.
+pub const E2E_MEDIA_TASK_NAME: &str = "e2e_media_transcode";
+
+/// Task type the Billing engineering team owns (Can edit), for the "yours first" specs.
+pub const E2E_INVOICE_TASK_NAME: &str = "e2e_invoice_sync";
+
+/// Queue the Media platform team owns (Can edit).
+pub const E2E_MEDIA_POOL: &str = "e2e-media";
+
 /// Signature of [`E2E_TASK_NAME`]: a description and one described argument, so the task
 /// type page has an Arguments table to show.
 const E2E_ECHO_SIGNATURE: &str = r#"{"description":"Echoes its input back. Used by the end-to-end tests.","properties":{"batch":{"type":"string","description":"The batch to echo, like batch-0042."}}}"#;
@@ -73,7 +82,12 @@ fn e2e_task_registry() -> TaskRegistry {
         TaskDefaults::standard(),
     )));
     registry.register(echo);
-    for name in [E2E_SETTINGS_TASK_NAME, E2E_LIMITED_TASK_NAME] {
+    for name in [
+        E2E_SETTINGS_TASK_NAME,
+        E2E_LIMITED_TASK_NAME,
+        E2E_MEDIA_TASK_NAME,
+        E2E_INVOICE_TASK_NAME,
+    ] {
         let desc: &'static TaskDescriptor =
             Box::leak(Box::new(TaskDescriptor::new(name, e2e_echo_invoke)));
         registry.register(desc);
@@ -228,6 +242,40 @@ pub const E2E_RUNNER_USER: &str = "runner";
 /// A user with no access who asks for it in the request spec.
 pub const E2E_REQUESTER_USER: &str = "requester";
 
+/// Media platform team: owns (Can edit) [`E2E_MEDIA_TASK_NAME`] and [`E2E_MEDIA_POOL`].
+pub const E2E_MEDIA_GROUP_ID: &str = "e2e_team_media";
+
+/// Kenji, on the Media platform team.
+pub const E2E_KENJI_USER: &str = "kenji";
+
+/// Ada, on the Billing engineering team ([`E2E_TEAM_GROUP_ID`]), which owns (Can edit)
+/// [`E2E_INVOICE_TASK_NAME`].
+pub const E2E_ADA_USER: &str = "ada";
+
+/// Every task type and queue the lab declares, for `owned_by` to check one by one. Queues the
+/// suite makes on the fly join through [`ensure_queue_bundle`].
+static KNOWN_QUEUES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Task types and queues of `kind` the lab knows about.
+pub fn known_resource_ids(kind: &str) -> Vec<String> {
+    if kind == boson_app::permissions::BOSON_QUEUE_KIND {
+        let mut ids = vec![
+            "global".to_string(),
+            E2E_POOL.to_string(),
+            E2E_MEDIA_POOL.to_string(),
+        ];
+        if let Ok(extra) = KNOWN_QUEUES.lock() {
+            ids.extend(extra.iter().cloned());
+        }
+        ids
+    } else {
+        e2e_task_registry()
+            .iter()
+            .map(|d| d.name.to_string())
+            .collect()
+    }
+}
+
 /// The host's admin group: holds `BosonAdmin`, with `admin` as member and owner.
 async fn seed_boson_admins_group(system: &Valence) {
     gauge::resource_permissions::ensure_group_granted_permission(
@@ -252,6 +300,11 @@ async fn seed_boson_admins_group(system: &Valence) {
 /// Ensure the bundle for a queue the suite makes on the fly, as host boot would for a
 /// configured pool. Harness only: the seed endpoint runs as System from the start.
 pub async fn ensure_queue_bundle(pool: &str) -> anyhow::Result<()> {
+    if let Ok(mut known) = KNOWN_QUEUES.lock() {
+        if !known.iter().any(|p| p == pool) {
+            known.push(pool.to_string());
+        }
+    }
     boson_app::permissions::ensure_boson_resource_bundles(
         &e2e_system_valence(),
         std::iter::empty::<&str>(),
@@ -274,7 +327,7 @@ async fn seed_resource_access(system: &Valence, owner: &Valence, registry: &Task
     ensure_boson_resource_bundles(
         system,
         &task_names,
-        ["global", E2E_POOL],
+        ["global", E2E_POOL, E2E_MEDIA_POOL],
         BOSON_ADMINS_GROUP_ID,
     )
     .await
@@ -303,7 +356,120 @@ async fn seed_resource_access(system: &Valence, owner: &Valence, registry: &Task
     )
     .await
     .expect("the team can run the e2e task type");
+
+    // Two teams that own work, for the "yours first" specs: Kenji's Media platform owns the
+    // media task type and queue, Ada's Billing engineering owns the invoice task type.
+    service::create_managed_group(
+        E2E_MEDIA_GROUP_ID,
+        "Media platform",
+        "Team that owns the media task type and queue",
+        Some("admin"),
+        Some("polaron"),
+        Some("media"),
+        system,
+    )
+    .await
+    .expect("create the media team group");
+    service::add_group_member_user(E2E_MEDIA_GROUP_ID, E2E_KENJI_USER, system)
+        .await
+        .expect("add kenji to the media team");
+    service::add_group_member_user(E2E_TEAM_GROUP_ID, E2E_ADA_USER, system)
+        .await
+        .expect("add ada to the billing team");
+    set_principal_role(
+        owner,
+        BOSON_TASK_TYPE,
+        E2E_MEDIA_TASK_NAME,
+        (PrincipalKind::Group, E2E_MEDIA_GROUP_ID),
+        Role::Edit,
+    )
+    .await
+    .expect("the media team can edit the media task type");
+    set_principal_role(
+        owner,
+        BOSON_TASK_TYPE,
+        E2E_INVOICE_TASK_NAME,
+        (PrincipalKind::Group, E2E_TEAM_GROUP_ID),
+        Role::Edit,
+    )
+    .await
+    .expect("the billing team can edit the invoice task type");
+    set_media_queue_edit(owner, true)
+        .await
+        .expect("the media team can edit the media queue");
 }
+
+/// Give or take back the Media platform team's Can edit on [`E2E_MEDIA_POOL`], granted by
+/// `owner` the way an owner does it from the Access card.
+async fn set_media_queue_edit(owner: &Valence, edit: bool) -> anyhow::Result<()> {
+    use boson_app::permissions::BOSON_QUEUE;
+    use gauge::resource_permissions::{remove_principal, roles::Role, set_principal_role};
+    use gauge::types::PrincipalKind;
+
+    let team = (PrincipalKind::Group, E2E_MEDIA_GROUP_ID);
+    if edit {
+        set_principal_role(owner, BOSON_QUEUE, E2E_MEDIA_POOL, team, Role::Edit).await?;
+    } else {
+        remove_principal(owner, BOSON_QUEUE, E2E_MEDIA_POOL, team).await?;
+    }
+    Ok(())
+}
+
+/// Give or take back the media team's Can edit on its queue, as `admin`, for the denied-pause
+/// spec.
+pub async fn media_queue_edit(edit: bool) -> anyhow::Result<()> {
+    let admin = e2e_system_valence().with_actor(Actor::User {
+        user_id: "admin".to_string(),
+    });
+    set_media_queue_edit(&admin, edit).await
+}
+
+/// Jobs and runs of the two owned task types: 25 queued jobs and 25 succeeded runs each,
+/// interleaved in time, so "yours first" puts a different 20 on page 1 for Kenji and Ada.
+///
+/// Jobs are dated two years ahead so they sort after every other spec's jobs; fixed ids make
+/// repeat calls overwrite rather than add.
+pub async fn seed_yours_first() -> anyhow::Result<()> {
+    let queue = e2e_queue();
+    let jobs_start = Utc::now() + chrono::Duration::days(730);
+    let now = Utc::now();
+    for i in 0..E2E_YOURS_FIRST_ROWS {
+        for (n, (task, tag, pool)) in [
+            (E2E_MEDIA_TASK_NAME, "media", E2E_MEDIA_POOL),
+            (E2E_INVOICE_TASK_NAME, "inv", "global"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let step = i64::try_from(i * 2 + n)?;
+            let mut job = Job::new(
+                task,
+                serde_json::json!({"System": {"operation": "e2e_yours_first"}}),
+                serde_json::json!({}),
+                0,
+                pool,
+                0,
+                None,
+            );
+            job.job_id = format!("e2e-yf-{tag}-{i:02}");
+            job.created_at = jobs_start + chrono::Duration::seconds(step);
+            job.status = JobStatus::Queued;
+            queue.upsert_job(&job).await?;
+
+            let mut run = Run::new(&job.job_id, task, 1);
+            run.run_id = format!("e2e-yf-run-{tag}-{i:02}");
+            run.status = RunStatus::Success;
+            run.started_at = now - chrono::Duration::seconds(30 + step);
+            run.finished_at = Some(run.started_at + chrono::Duration::seconds(1));
+            run.duration_ms = Some(1_000);
+            queue.upsert_run(&run).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Jobs and runs per owned task type that [`seed_yours_first`] upserts.
+pub const E2E_YOURS_FIRST_ROWS: usize = 25;
 
 /// Approve every pending access request `admin` may review, the way an owner does it in
 /// Gauge's Requests page. Returns how many were approved.
@@ -416,6 +582,8 @@ pub async fn init_e2e_valence() {
     seed_user("unverified", false, &system).await;
     seed_user(E2E_RUNNER_USER, true, &system).await;
     seed_user(E2E_REQUESTER_USER, true, &system).await;
+    seed_user(E2E_KENJI_USER, true, &system).await;
+    seed_user(E2E_ADA_USER, true, &system).await;
     seed_super_user_with_member(&system, "admin").await;
 
     sync_permission_manifests(&system, &[boson_admin_manifest()])

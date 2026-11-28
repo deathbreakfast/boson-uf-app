@@ -233,6 +233,8 @@ mod tests {
             last_error: error.map(str::to_string),
             failed_at: None,
             can_run: true,
+            owner: None,
+            yours: false,
         }
     }
 

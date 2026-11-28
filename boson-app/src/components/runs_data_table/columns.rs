@@ -1,15 +1,18 @@
 use std::sync::Arc;
 
 use leptos::prelude::*;
-use orbital::primitives::{ColumnType, DataTableColumnDef, Link, Tooltip};
+use orbital::primitives::{ColumnType, DataTableColumnDef, Link, TimestampStyle, Tooltip};
 use orbital_data::DataRecord;
 
 use super::mapper::run_status_from_key;
 use crate::components::format::short_id;
-use crate::components::{attempt_help, duration_help, BosonHelpColumnHeader, RunStatusBadge};
+use crate::components::{
+    attempt_help, duration_help, owner_column, timestamp_column, BosonHelpColumnHeader,
+    RunStatusBadge,
+};
 
 /// Columns the runs table shows; the skeleton rows match this count.
-pub const RUNS_TABLE_COLUMNS: usize = 7;
+pub const RUNS_TABLE_COLUMNS: usize = 8;
 
 fn text(record: &DataRecord, key: &str) -> String {
     record
@@ -81,6 +84,7 @@ pub fn runs_table_columns() -> Vec<DataTableColumnDef> {
         DataTableColumnDef::new("task_name", "Task")
             .with_sortable(false)
             .with_cell_view(task_view),
+        owner_column(),
         DataTableColumnDef::new("status", "Status")
             .with_col_type(ColumnType::SingleSelect)
             .with_sortable(false)
@@ -88,7 +92,7 @@ pub fn runs_table_columns() -> Vec<DataTableColumnDef> {
         DataTableColumnDef::new("attempt", "Attempt")
             .with_sortable(false)
             .with_header_view(attempt_header),
-        DataTableColumnDef::new("started_at", "Started").with_sortable(false),
+        timestamp_column("started_at", "Started", TimestampStyle::DateTime),
         DataTableColumnDef::new("duration_ms", "Duration")
             .with_sortable(false)
             .with_header_view(duration_header),

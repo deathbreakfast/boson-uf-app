@@ -1,6 +1,6 @@
 use leptos::prelude::*;
 use orbital::components::{Body1, Caption2, Card};
-use orbital::primitives::{Grid, GridConfig, GridItem, InfoLabel, InfoLabelInfo};
+use orbital::primitives::{Grid, GridConfig, GridItem, InfoLabel, InfoLabelInfo, Timestamp};
 
 use crate::components::{duration_help, BosonCardContent, BosonTableLink};
 use crate::server::RunDetail;
@@ -67,10 +67,21 @@ pub fn RunInfoGrid(
                     })}
 
                     <GridItem><Caption2 class=class_names.label>"Started"</Caption2></GridItem>
-                    <GridItem><Body1>{run.started_at.clone()}</Body1></GridItem>
+                    <GridItem>
+                        <span data-testid="run-info-started">
+                            <Timestamp value=run.started_at.clone() />
+                        </span>
+                    </GridItem>
 
                     <GridItem><Caption2 class=class_names.label>"Finished"</Caption2></GridItem>
-                    <GridItem><Body1>{run.finished_at.clone().unwrap_or_else(|| "-".to_string())}</Body1></GridItem>
+                    <GridItem>
+                        <span data-testid="run-info-finished">
+                            {run.finished_at.clone().map_or_else(
+                                || view! { <Body1>"Still running"</Body1> }.into_any(),
+                                |at| view! { <Timestamp value=at /> }.into_any(),
+                            )}
+                        </span>
+                    </GridItem>
 
                     <GridItem>
                         <InfoLabel>

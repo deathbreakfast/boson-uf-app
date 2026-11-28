@@ -36,3 +36,32 @@ pub(crate) fn email_verified_override() -> Option<bool> {
 pub(crate) const fn email_verified_override() -> Option<bool> {
     None
 }
+
+/// Task type whose filtered Runs and Jobs list loads fail, as if the coordinator were down,
+/// so the load-error spec can show Try again without touching other lists.
+#[cfg(all(feature = "ssr", feature = "e2e-lab"))]
+static FAIL_LIST_LOADS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Fail list loads filtered to `task` until called again with `None`.
+#[cfg(all(feature = "ssr", feature = "e2e-lab"))]
+pub fn set_fail_list_loads(task: Option<String>) {
+    if let Ok(mut slot) = FAIL_LIST_LOADS.lock() {
+        *slot = task;
+    }
+}
+
+/// Whether a list load filtered to `task` should fail (lab only).
+#[cfg(all(feature = "ssr", feature = "e2e-lab"))]
+pub(crate) fn list_load_fails(task: Option<&str>) -> bool {
+    let Some(task) = task else { return false };
+    FAIL_LIST_LOADS
+        .lock()
+        .is_ok_and(|slot| slot.as_deref() == Some(task))
+}
+
+/// Never fails when the lab feature is disabled.
+#[cfg(all(feature = "ssr", not(feature = "e2e-lab")))]
+#[must_use]
+pub(crate) const fn list_load_fails(_task: Option<&str>) -> bool {
+    false
+}

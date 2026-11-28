@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use boson_backend::{JobsTab, FAILED_JOB_RETENTION_DAYS};
+use boson_backend::{JobsTab, ShowMode, FAILED_JOB_RETENTION_DAYS};
 use leptos::prelude::*;
 use leptos::task::spawn_local_scoped;
 use orbital::components::{
@@ -16,9 +16,11 @@ use orbital::primitives::{
 };
 
 use crate::components::{
-    build_jobs_fetcher, failed_table_columns, BosonCardContent, BosonDataTableShell,
-    BosonDataTableSkeletonRows, JobRows, FAILED_TABLE_COLUMNS, QUEUE_TABLE_PAGE_SIZE,
+    build_jobs_fetcher, failed_table_columns, track_load_error, BosonCardContent,
+    BosonDataTableShell, BosonDataTableSkeletonRows, JobRows, LoadError, TableLoadError,
+    FAILED_TABLE_COLUMNS, QUEUE_TABLE_PAGE_SIZE,
 };
+use crate::errors::friendly_error;
 use crate::server::{drop_jobs, retry_jobs, JobSummary};
 
 use super::copy::{action_failures, drop_success, retry_success};
@@ -67,7 +69,7 @@ fn confirm_action(
                     });
                     state.error.set(action_failures(verb, &outcome));
                 }
-                Err(e) => state.error.set(Some(e.to_string())),
+                Err(e) => state.error.set(Some(friendly_error(&e).sentence())),
             }
             dialog.set(false);
             state.pending.set(false);
@@ -88,6 +90,9 @@ pub fn FailedJobsPanel(
     card_class: String,
     /// Card content class from the page layout.
     card_content_class: String,
+    /// Whose failed jobs come first.
+    #[prop(optional)]
+    show: ShowMode,
 ) -> impl IntoView {
     let selected = RwSignal::new(HashSet::<String>::new());
     let targets = RwSignal::new(Vec::<String>::new());
@@ -155,6 +160,7 @@ pub fn FailedJobsPanel(
                 on_drop_row=on_drop_row
                 card_class=card_class
                 card_content_class=card_content_class
+                show=show
             />
             <Caption1>
                 {format!(
@@ -230,9 +236,12 @@ fn FailedJobsTable(
     on_drop_row: Callback<String>,
     card_class: String,
     card_content_class: String,
+    show: ShowMode,
 ) -> impl IntoView {
+    let load_error: LoadError = RwSignal::new(None);
+    let on_retry = Callback::new(move |()| refresh.update(|n| *n += 1));
     let data_source = DataTableSource::Server {
-        fetcher: build_jobs_fetcher(JobsTab::Failed, rows),
+        fetcher: track_load_error(build_jobs_fetcher(JobsTab::Failed, rows, show), load_error),
         page_size: QUEUE_TABLE_PAGE_SIZE,
     };
 
@@ -282,15 +291,19 @@ fn FailedJobsTable(
                             <BosonDataTableSkeletonRows columns=FAILED_TABLE_COLUMNS />
                         </DataTableLoadingView>
                         <DataTableEmptyView slot>
-                            <EmptyState
-                                message="No failed jobs"
-                                description="When a job uses every attempt it waits here for Retry or Drop."
-                            />
+                            <TableLoadError error=load_error noun="failed jobs" on_retry=on_retry>
+                                <EmptyState
+                                    message="No failed jobs"
+                                    description="When a job uses every attempt it waits here for Retry or Drop."
+                                />
+                            </TableLoadError>
                         </DataTableEmptyView>
                         <DataTableNoResultsView slot>
-                            <MessageBar intent=MessageBarIntent::Info>
-                                "No failed jobs match your search."
-                            </MessageBar>
+                            <TableLoadError error=load_error noun="failed jobs" on_retry=on_retry>
+                                <MessageBar intent=MessageBarIntent::Info>
+                                    "No failed jobs match your search."
+                                </MessageBar>
+                            </TableLoadError>
                         </DataTableNoResultsView>
                     </DataTable>
                 </BosonDataTableShell>

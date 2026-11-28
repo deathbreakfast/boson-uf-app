@@ -3,9 +3,12 @@
 //! `list_jobs_datatable_page` reads one page at a time with the coordinator's keyset read
 //! (`list_jobs_after`), passing a [`boson_core::JobFilter`] built from the tab, the request's
 //! filter rules and its quick search ([`boson_backend::job_filter_from_request`]). The first
-//! page also returns `count_jobs_matching` as the total. A request past the first page whose
-//! cursor doesn't fit the query walks forward to its offset by keyset, then hands out cursors
-//! again. `list_jobs_page` (infinite scroll) pages by offset.
+//! page also returns `count_jobs_matching` as the total. The `show` rule (Yours first, Only
+//! yours, Everyone's) reads the rows of task types the reader's teams own first
+//! ([`boson_backend::scan_parts`]), and the cursor names the part as well as the key, so paging
+//! keeps that order. A request past the first page whose cursor doesn't fit the query walks
+//! forward to its offset by keyset, then hands out cursors again. `list_jobs_page` (infinite
+//! scroll) pages by offset.
 //!
 //! [`authorize_job_action`] is the one check behind Cancel, Retry and Drop: Run on the job's
 //! task type, as the session actor. Rows also carry whether the reader holds Run, and the
@@ -288,28 +291,28 @@ pub async fn list_jobs_page(
     result
 }
 
-/// Key of the job just before `offset` in `filter`'s order, read forward by keyset.
-///
-/// Serves a page whose cursor doesn't fit the query; `None` when `offset` is 0.
+/// Total for a jobs list: every match, or under Only yours the matches of each owned task
+/// type added up. `None` when the backend can't count.
 #[cfg(feature = "ssr")]
-async fn job_key_at_offset(
+async fn count_owned_jobs(
     backend: &dyn boson_coordinator::BosonCoordinatorBackend,
     filter: &boson_core::JobFilter,
-    offset: usize,
-) -> Option<boson_core::JobKey> {
-    let mut key: Option<boson_core::JobKey> = None;
-    let mut left = offset;
-    while left > 0 {
-        let chunk = left.min(MAX_PAGE_LIST_LIMIT as usize);
-        let rows = backend.list_jobs_after(filter, key.as_ref(), chunk).await;
-        let Some(last) = rows.last() else { break };
-        key = Some(boson_core::JobKey::from(last));
-        left -= rows.len();
-        if rows.len() < chunk {
-            break;
-        }
+    mode: boson_backend::ShowMode,
+    owned: &[String],
+) -> Option<u64> {
+    if mode != boson_backend::ShowMode::OnlyYours || owned.is_empty() {
+        return backend.count_jobs_matching(filter).await.ok();
     }
-    key
+    let mut total = 0u64;
+    for task in owned {
+        if filter.task.as_ref().is_some_and(|t| t != task) {
+            continue;
+        }
+        let mut one = filter.clone();
+        one.task = Some(task.clone());
+        total += backend.count_jobs_matching(&one).await.ok()?;
+    }
+    Some(total)
 }
 
 /// Fill `max_attempts` from each task type's current retry policy, one lookup per task.
@@ -347,7 +350,7 @@ pub async fn list_jobs_datatable_page(
     tab: Option<String>,
 ) -> Result<Page<JobSummary>, ServerFnError> {
     let result = async {
-        use boson_backend::{JobsTab, ListStart};
+        use boson_backend::{JobsTab, PartKey, PartStart};
 
         let ctx = higgs::Higgs::from_request().await?;
         require_session(&ctx)?;
@@ -356,6 +359,15 @@ pub async fn list_jobs_datatable_page(
         let backend = super::helpers::boson_backend()?;
         let backend = backend.as_ref();
 
+        if crate::e2e_lab::list_load_fails(
+            boson_backend::run_filter_from_request(&request, None, chrono::Utc::now())
+                .task
+                .as_deref(),
+        ) {
+            return Err(ServerFnError::new(
+                "Failed to list jobs: coordinator unavailable",
+            ));
+        }
         let Some(filter) =
             boson_backend::job_filter_from_request(&request, tab, chrono::Utc::now())
         else {
@@ -367,26 +379,46 @@ pub async fn list_jobs_datatable_page(
             });
         };
 
-        let key = match boson_backend::jobs_list_start(&request) {
-            ListStart::After(key) => key,
-            ListStart::Offset(offset) => job_key_at_offset(backend, &filter, offset).await,
-        };
-        let rows = backend
-            .list_jobs_after(&filter, key.as_ref(), (limit + 1) as usize)
+        let mut ownership = super::access::Ownership::from_context();
+        let owned = ownership
+            .owned(crate::permissions::BOSON_TASK_TYPE_KIND)
             .await;
+        let mode = boson_backend::ShowMode::from_request(&request);
+        let is_owned = |j: &boson_core::Job| owned.contains(&j.task_name);
+        let key_of = |j: &boson_core::Job| boson_core::JobKey::from(j);
+        let read = |_part, after: Option<boson_core::JobKey>, n| {
+            let filter = &filter;
+            async move { backend.list_jobs_after(filter, after.as_ref(), n).await }
+        };
+        let start = match boson_backend::jobs_part_start(&request, mode, !owned.is_empty()) {
+            PartStart::At(at) => Some(at),
+            // No cursor fits: walk forward to the offset, then page from there.
+            PartStart::Offset(offset) => {
+                let first = PartKey {
+                    part: boson_backend::ScanPart::first(mode, !owned.is_empty()),
+                    key: None,
+                };
+                boson_backend::scan_parts(first, mode, offset, is_owned, key_of, read)
+                    .await
+                    .resume
+            }
+        };
+        let scan = match start {
+            Some(at) => {
+                boson_backend::scan_parts(at, mode, limit as usize, is_owned, key_of, read).await
+            }
+            None => boson_backend::PartScan {
+                rows: Vec::new(),
+                resume: None,
+            },
+        };
         // Count on the first page only; cursor pages report `None`.
         let total_count = if request.is_first_page() {
-            backend.count_jobs_matching(&filter).await.ok()
+            count_owned_jobs(backend, &filter, mode, &owned).await
         } else {
             None
         };
-        let mut page = boson_backend::jobs_page_from_rows(
-            rows,
-            &request,
-            limit,
-            &ListStart::After(key),
-            total_count,
-        );
+        let mut page = boson_backend::jobs_page_from_scan(scan, &request, limit, total_count);
 
         fill_max_attempts(backend, &mut page.items, |j| {
             (j.task_name.as_str(), &mut j.max_attempts)
@@ -406,6 +438,10 @@ pub async fn list_jobs_datatable_page(
             }
         }
         apply_job_access(&mut page.items).await;
+        for job in &mut page.items {
+            job.yours = owned.contains(&job.task_name);
+            job.owner = Some(ownership.task_type_owner(&job.task_name).await);
+        }
         Ok(page)
     }
     .await;

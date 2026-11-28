@@ -4,18 +4,21 @@ use std::sync::Arc;
 use leptos::prelude::*;
 use orbital::primitives::{
     Body1, Button, ButtonAppearance, ButtonSize, ColumnType, DataTableColumnDef, Flex, Link,
+    TimestampStyle,
 };
 use orbital_data::DataRecord;
 
-use crate::components::{pool_help, short_id_link, BosonHelpColumnHeader, JobStatusBadge};
+use crate::components::{
+    owner_column, pool_help, short_id_link, timestamp_column, BosonHelpColumnHeader, JobStatusBadge,
+};
 use crate::server::JobStatusDto;
 
 use super::mapper::{job_status_from_key, CAN_RUN_FIELD};
 
 /// Columns the Active and Finished tables show; the skeleton rows match this count.
-pub const JOBS_TABLE_COLUMNS: usize = 7;
+pub const JOBS_TABLE_COLUMNS: usize = 8;
 /// Columns the Failed table shows, besides the selection checkbox.
-pub const FAILED_TABLE_COLUMNS: usize = 7;
+pub const FAILED_TABLE_COLUMNS: usize = 8;
 
 fn text(record: &DataRecord, key: &str) -> String {
     record
@@ -134,6 +137,7 @@ pub fn queue_table_columns(
     vec![
         job_column(),
         task_column(),
+        owner_column(),
         args_column(),
         DataTableColumnDef::new("status", "Status")
             .with_col_type(ColumnType::SingleSelect)
@@ -143,9 +147,7 @@ pub fn queue_table_columns(
             .with_sortable(false)
             .with_header_view(pool_header)
             .with_cell_view(pool_view),
-        DataTableColumnDef::new("waited", "Waited")
-            .with_sortable(false)
-            .with_filterable(false),
+        timestamp_column("waited", "Waited", TimestampStyle::Relative),
         DataTableColumnDef::new("cancel", "Action")
             .with_sortable(false)
             .with_filterable(false)
@@ -196,6 +198,7 @@ pub fn failed_table_columns(
     vec![
         job_column(),
         task_column(),
+        owner_column(),
         args_column(),
         DataTableColumnDef::new("attempts", "Attempts")
             .with_sortable(false)
@@ -203,9 +206,7 @@ pub fn failed_table_columns(
         DataTableColumnDef::new("last_error", "Last error")
             .with_sortable(false)
             .with_filterable(false),
-        DataTableColumnDef::new("failed_at", "Failed")
-            .with_sortable(false)
-            .with_filterable(false),
+        timestamp_column("failed_at", "Failed", TimestampStyle::DateTime),
         DataTableColumnDef::new("actions", "Actions")
             .with_sortable(false)
             .with_filterable(false)

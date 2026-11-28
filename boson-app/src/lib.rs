@@ -112,7 +112,7 @@
 //! ```rust,ignore
 //! use boson_app::{list_queues, pause_queue, purge_queue};
 //!
-//! for q in list_queues().await? {
+//! for q in list_queues(None).await? {
 //!     println!("{} is {}", q.name, q.state.label());
 //! }
 //! pause_queue("render-pool".into()).await?;
@@ -268,6 +268,7 @@ use uf_product_macros::uf_app;
 mod components;
 /// Lab-only overrides for `boson-uf-app-e2e` (setters require feature `e2e-lab`).
 pub mod e2e_lab;
+pub mod errors;
 mod layout;
 mod lazy_routes;
 /// Client-side live-update hooks (poll tick, placeholder broadcast sources).

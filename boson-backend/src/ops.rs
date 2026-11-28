@@ -71,6 +71,9 @@ pub struct QueueSummary {
     pub name: String,
     /// Owner label.
     pub owner: String,
+    /// Whether the reader's teams own the queue; "yours first" lists sort these rows first.
+    #[serde(default)]
+    pub yours: bool,
     /// Falling behind, keeping up, or paused.
     pub state: QueueStateDto,
     /// Jobs waiting.
@@ -139,6 +142,15 @@ pub struct NeedsAttentionLine {
     pub detail: String,
     /// Owner label.
     pub owner: String,
+    /// Task type the line is about, for a failed line.
+    #[serde(default)]
+    pub task: Option<String>,
+    /// Queue the line is about, for a falling-behind line.
+    #[serde(default)]
+    pub queue: Option<String>,
+    /// Whether the reader's teams own the line's task type or queue.
+    #[serde(default)]
+    pub yours: bool,
     /// Filtered list behind the problem.
     pub href: String,
     /// Link text.
@@ -178,6 +190,9 @@ pub struct FailingTaskRow {
     pub task: String,
     /// Owner label.
     pub owner: String,
+    /// Whether the reader's teams own the task type.
+    #[serde(default)]
+    pub yours: bool,
     /// Failed runs in the last 24 hours.
     pub failed_24h: u64,
     /// Runs in the last 24 hours.
@@ -208,6 +223,7 @@ pub fn queue_summary(stats: &PoolStats, pause: Option<&PoolState>) -> QueueSumma
     QueueSummary {
         name: stats.pool.clone(),
         owner: DEFAULT_OWNER_LABEL.to_string(),
+        yours: false,
         state: queue_state(stats),
         waiting: stats.waiting,
         running: stats.running,
@@ -352,6 +368,9 @@ pub fn needs_attention_lines(
                     p.done_in_window
                 ),
                 owner: DEFAULT_OWNER_LABEL.to_string(),
+                task: None,
+                queue: Some(p.pool.clone()),
+                yours: false,
                 href: boson_queue_path(&p.pool),
                 link_label: format!("Open {}", p.pool),
             }
@@ -382,6 +401,9 @@ pub fn needs_attention_lines(
                 ),
                 detail: detail.to_string(),
                 owner: DEFAULT_OWNER_LABEL.to_string(),
+                task: Some(f.task.clone()),
+                queue: None,
+                yours: false,
                 href: boson_failed_jobs_for_task_path(&f.task),
                 link_label: link.to_string(),
             },
@@ -402,6 +424,9 @@ pub fn needs_attention_lines(
                 title: format!("{} failed {} times today", t.task, t.failed_24h),
                 detail,
                 owner: DEFAULT_OWNER_LABEL.to_string(),
+                task: Some(t.task.clone()),
+                queue: None,
+                yours: false,
                 href: boson_failed_runs_for_task_path(&t.task),
                 link_label: "See its failed runs".to_string(),
             },
@@ -428,6 +453,7 @@ pub fn failing_most_rows(tasks: &[TaskFailureStats]) -> Vec<FailingTaskRow> {
         .map(|t| FailingTaskRow {
             task: t.task.clone(),
             owner: DEFAULT_OWNER_LABEL.to_string(),
+            yours: false,
             failed_24h: t.failed_24h,
             runs_24h: t.runs_24h,
             success_rate: success_rate_one_decimal(t.runs_24h, t.succeeded_24h),

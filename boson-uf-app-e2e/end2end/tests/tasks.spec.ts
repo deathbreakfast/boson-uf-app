@@ -16,7 +16,7 @@ test.describe("pw-boson-tasks", () => {
     for (const label of ["Owner", "Queue", "Waiting", "Success rate"]) {
       await expect(table.getByText(label, { exact: true }).first()).toBeVisible();
     }
-    await expect(table.getByText("Not set yet").first()).toBeVisible();
+    await expect(table.getByText("Boson admins").first()).toBeVisible();
     // No raw signature JSON or `pool="…", priority=…` strings, and no per-row buttons.
     await expect(table.getByText(/pool="/)).toHaveCount(0);
     await expect(table.getByText(/"properties"/)).toHaveCount(0);

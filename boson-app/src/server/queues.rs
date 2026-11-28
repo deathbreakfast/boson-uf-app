@@ -108,9 +108,14 @@ async fn actor_label(ctx: &higgs::Higgs) -> String {
 
 /// Every queue with its state and numbers for the last hour, falling behind first.
 ///
-/// Each row carries the reader's role; rows the reader can't View have no numbers.
+/// Each row carries the reader's role and its owner; rows the reader can't View have no
+/// numbers. `show` (`first`, `mine` or `all`, see [`boson_backend::ShowMode`]) puts the queues
+/// the reader's teams own first, or lists only those.
 #[uf_product_macros::server]
-pub async fn list_queues() -> Result<Vec<QueueSummary>, ServerFnError> {
+pub async fn list_queues(
+    /// `?show=` value; missing reads as Yours first.
+    show: Option<String>,
+) -> Result<Vec<QueueSummary>, ServerFnError> {
     let result = async {
         let ctx = higgs::Higgs::from_request().await?;
         require_session(&ctx)?;
@@ -136,7 +141,16 @@ pub async fn list_queues() -> Result<Vec<QueueSummary>, ServerFnError> {
         super::access::ReaderAccess::from_context()
             .label_queues(&mut rows)
             .await;
-        Ok(rows)
+        let mut ownership = super::access::Ownership::from_context();
+        let owned = ownership.owned(crate::permissions::BOSON_QUEUE_KIND).await;
+        for row in &mut rows {
+            row.yours = owned.contains(&row.name);
+            row.owner = ownership.queue_owner(&row.name).await;
+        }
+        let mode = boson_backend::ShowMode::from_key(show.as_deref().unwrap_or_default());
+        Ok(boson_backend::order_owned(rows, &owned, mode, |q| {
+            q.name.as_str()
+        }))
     }
     .await;
     #[cfg(feature = "ssr")]
@@ -166,6 +180,12 @@ pub async fn get_queue(
         summary.access = access.queue_label(&name).await.to_string();
         let can_edit = access.queue(&name, "Edit").await;
         let can_delete = access.queue(&name, "Delete").await;
+        let mut ownership = super::access::Ownership::from_context();
+        summary.owner = ownership.queue_owner(&name).await;
+        summary.yours = ownership
+            .owned(crate::permissions::BOSON_QUEUE_KIND)
+            .await
+            .contains(&name);
         let filter = boson_core::JobFilter {
             statuses: vec![
                 boson_core::JobStatus::Running,

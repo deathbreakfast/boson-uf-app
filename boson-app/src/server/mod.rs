@@ -58,6 +58,7 @@ mod dashboard;
 mod gluon_pools;
 mod helpers;
 mod jobs;
+mod ownership;
 pub mod page_query;
 mod queues;
 mod runs;
@@ -77,6 +78,7 @@ pub use gluon_pools::list_gluon_pools_for_boson_task_config;
 pub use jobs::{
     cancel_job, drop_jobs, list_jobs_datatable_page, list_jobs_page, retry_jobs, JobAction,
 };
+pub use ownership::get_list_ownership;
 pub use queues::{get_queue, list_queues, pause_queue, purge_queue, resume_queue};
 pub use runs::{
     get_run, get_run_detail, list_runs_datatable_page, list_runs_page, list_task_names,

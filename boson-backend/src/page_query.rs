@@ -299,3 +299,131 @@ pub fn job_filter_from_request(
         include_dropped: false,
     })
 }
+
+/// Filter-rule field holding the list's [`ShowMode`] key (the page's `?show=`).
+pub const SHOW_FIELD: &str = "show";
+
+/// Whose rows a list shows, and in what order: the Show select on every Boson list.
+///
+/// "Yours" means task types or queues the viewer, or a team or group they're in, holds Owner
+/// or Can edit on (`ResourceAccessBackend::owned_by`). The app admin group's default
+/// ownership doesn't count, and neither does Can run.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum ShowMode {
+    /// The viewer's rows first, then everyone else's, each part in the list's usual order.
+    #[default]
+    YoursFirst,
+    /// Only the viewer's rows.
+    OnlyYours,
+    /// Every row in the list's usual order.
+    Everyones,
+}
+
+impl ShowMode {
+    /// Mode for a `?show=` value: `mine` or `all`; anything else is [`ShowMode::YoursFirst`].
+    #[must_use]
+    pub fn from_key(key: &str) -> Self {
+        match key {
+            "mine" => Self::OnlyYours,
+            "all" => Self::Everyones,
+            _ => Self::YoursFirst,
+        }
+    }
+
+    /// The `?show=` value for this mode.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::YoursFirst => "first",
+            Self::OnlyYours => "mine",
+            Self::Everyones => "all",
+        }
+    }
+
+    /// Mode from the request's [`SHOW_FIELD`] rule; [`ShowMode::YoursFirst`] when absent.
+    #[must_use]
+    pub fn from_request(request: &PageRequest) -> Self {
+        first_rule(request, SHOW_FIELD).map_or_else(Self::default, |k| Self::from_key(&k))
+    }
+}
+
+/// Order `rows` for `mode`: owned rows first (or only owned rows), each part keeping its order.
+///
+/// `key` names the row's task type or queue, matched against `owned`. With
+/// [`ShowMode::Everyones`], or nothing owned, the rows come back unchanged: a viewer whose teams
+/// own nothing sees everyone's rows in every mode.
+///
+/// ```
+/// use boson_backend::{order_owned, ShowMode};
+///
+/// let rows = vec!["a", "b", "c", "b"];
+/// let owned = vec!["b".to_string()];
+/// assert_eq!(order_owned(rows.clone(), &owned, ShowMode::YoursFirst, |r| r), ["b", "b", "a", "c"]);
+/// assert_eq!(order_owned(rows.clone(), &owned, ShowMode::OnlyYours, |r| r), ["b", "b"]);
+/// assert_eq!(order_owned(rows, &owned, ShowMode::Everyones, |r| r), ["a", "b", "c", "b"]);
+/// ```
+pub fn order_owned<T>(
+    rows: Vec<T>,
+    owned: &[String],
+    mode: ShowMode,
+    key: impl Fn(&T) -> &str,
+) -> Vec<T> {
+    let is_owned = |row: &T| owned.iter().any(|o| o == key(row));
+    match mode {
+        _ if owned.is_empty() => rows,
+        ShowMode::Everyones => rows,
+        ShowMode::OnlyYours => rows.into_iter().filter(|r| is_owned(r)).collect(),
+        ShowMode::YoursFirst => {
+            let (mut mine, rest): (Vec<T>, Vec<T>) = rows.into_iter().partition(|r| is_owned(r));
+            mine.extend(rest);
+            mine
+        }
+    }
+}
+
+/// The line above a "yours first" list: whose rows come first, or why everyone's show.
+///
+/// `noun` is the plural the list is grouped by ("task types", "queues"); `teams` names the
+/// teams (or "you") behind the viewer's owned rows, empty when they own none.
+///
+/// ```
+/// use boson_backend::{show_caption, ShowMode};
+///
+/// let teams = vec!["Media platform".to_string()];
+/// assert_eq!(
+///     show_caption(ShowMode::YoursFirst, "task types", &teams),
+///     "Yours first: task types owned by Media platform, then everyone else's."
+/// );
+/// assert_eq!(
+///     show_caption(ShowMode::YoursFirst, "task types", &[]),
+///     "Your teams own no task types here, so this shows everyone's."
+/// );
+/// ```
+#[must_use]
+pub fn show_caption(mode: ShowMode, noun: &str, teams: &[String]) -> String {
+    if teams.is_empty() {
+        return match mode {
+            ShowMode::Everyones => format!("Everyone's {noun}, in the usual order."),
+            _ => format!("Your teams own no {noun} here, so this shows everyone's."),
+        };
+    }
+    let owners = join_names(teams);
+    match mode {
+        ShowMode::YoursFirst => {
+            format!("Yours first: {noun} owned by {owners}, then everyone else's.")
+        }
+        ShowMode::OnlyYours => format!("Only yours: {noun} owned by {owners}."),
+        ShowMode::Everyones => format!("Everyone's {noun}, in the usual order."),
+    }
+}
+
+/// "A", "A and B", "A, B and C".
+fn join_names(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}

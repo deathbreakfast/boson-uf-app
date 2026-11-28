@@ -9,9 +9,10 @@ use orbital::primitives::{
 };
 
 use crate::components::{
-    failing_most_help, no_toolbar, row_model, success_rate_help, text_cell, BosonCardContent,
-    BosonDataTableRefetchSkeleton, BosonHelpCardHeader, BosonHelpColumnHeader,
+    failing_most_help, no_toolbar, owner_column, row_model, success_rate_help, text_cell,
+    BosonCardContent, BosonDataTableRefetchSkeleton, BosonHelpCardHeader, BosonHelpColumnHeader,
 };
+use crate::errors::friendly_error;
 use crate::server::FailingTaskRow;
 
 fn columns() -> Vec<DataTableColumnDef> {
@@ -31,7 +32,7 @@ fn columns() -> Vec<DataTableColumnDef> {
         DataTableColumnDef::new("task", "Task")
             .with_sortable(false)
             .with_cell_view(task_view),
-        DataTableColumnDef::new("owner", "Owner").with_sortable(false),
+        owner_column(),
         DataTableColumnDef::new("failed", "Failed (24h)").with_sortable(false),
         DataTableColumnDef::new("runs", "Runs (24h)").with_sortable(false),
         DataTableColumnDef::new("rate", "Success rate")
@@ -50,6 +51,7 @@ fn rows(tasks: &[FailingTaskRow]) -> Vec<orbital::primitives::DataTableRowModel>
                 &[
                     ("task", t.task.clone()),
                     ("owner", t.owner.clone()),
+                    ("yours", if t.yours { "yes" } else { "" }.to_string()),
                     ("failed", t.failed_24h.to_string()),
                     ("runs", t.runs_24h.to_string()),
                     ("rate", t.success_rate.clone()),
@@ -109,7 +111,7 @@ pub fn FailingMostCard(
                                 Ok(tasks) => view! { <FailingMostTable tasks=tasks loading=false /> }.into_any(),
                                 Err(e) => view! {
                                     <MessageBar intent=MessageBarIntent::Error>
-                                        "Couldn't load task failures. " {e.to_string()}
+                                        {format!("Couldn't load task failures. {}", friendly_error(&e).sentence())}
                                     </MessageBar>
                                 }.into_any(),
                             })}

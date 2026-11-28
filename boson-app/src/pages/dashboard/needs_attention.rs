@@ -8,6 +8,7 @@ use orbital::primitives::{
 };
 
 use crate::components::{BosonCardContent, BosonHelpCardHeader};
+use crate::errors::friendly_error;
 use crate::server::{AttentionKind, NeedsAttentionLine};
 
 #[component]
@@ -50,7 +51,18 @@ fn NeedsAttentionRow(
                         <Flex vertical=true gap=SpacingSize::Size40.flex_gap()>
                             <Body1Strong>{line.title}</Body1Strong>
                             <Caption1>{line.detail}</Caption1>
-                            <Caption1>{format!("Owner: {}", line.owner)}</Caption1>
+                            <Flex align=FlexAlign::Center gap=SpacingSize::Size80.flex_gap()>
+                                <Caption1>{format!("Owner: {}", line.owner)}</Caption1>
+                                {line.yours.then(|| view! {
+                                    <Badge
+                                        appearance=BadgeAppearance::Tint
+                                        color=BadgeColor::Brand
+                                        attr:data-testid="boson-yours"
+                                    >
+                                        "Yours"
+                                    </Badge>
+                                })}
+                            </Flex>
                         </Flex>
                     </Flex>
                     <Link href=line.href attr:data-testid=format!("needs-attention-link-{index}")>
@@ -60,6 +72,49 @@ fn NeedsAttentionRow(
             </div>
         </ListItem>
     }
+}
+
+/// The lines in one list, or split into "Your teams (…)" and "Other teams" when some are the
+/// reader's. The server sends the reader's lines first, each part worst first.
+#[component]
+fn NeedsAttentionGroups(lines: Vec<NeedsAttentionLine>) -> impl IntoView {
+    let rows = |lines: Vec<(usize, NeedsAttentionLine)>| {
+        view! {
+            <List>
+                {lines
+                    .into_iter()
+                    .map(|(index, line)| view! { <NeedsAttentionRow line=line index=index /> })
+                    .collect_view()}
+            </List>
+        }
+    };
+    let (mine, others): (Vec<_>, Vec<_>) =
+        lines.into_iter().enumerate().partition(|(_, l)| l.yours);
+    if mine.is_empty() {
+        return rows(others).into_any();
+    }
+    let mut teams: Vec<String> = Vec::new();
+    for (_, line) in &mine {
+        if !teams.contains(&line.owner) {
+            teams.push(line.owner.clone());
+        }
+    }
+    let heading = format!("Your teams ({})", teams.join(", "));
+    view! {
+        <Flex vertical=true gap=SpacingSize::Size120.flex_gap()>
+            <div data-testid="needs-attention-yours">
+                <Body1Strong>{heading}</Body1Strong>
+                {rows(mine)}
+            </div>
+            {(!others.is_empty()).then(|| view! {
+                <div data-testid="needs-attention-others">
+                    <Body1Strong>"Other teams"</Body1Strong>
+                    {rows(others)}
+                </div>
+            })}
+        </Flex>
+    }
+    .into_any()
 }
 
 /// Needs attention: what's stuck or failing, worst first, each with a link to the list behind
@@ -85,18 +140,10 @@ pub fn NeedsAttentionCard(
                                     />
                                 </div>
                             }.into_any(),
-                            Ok(lines) => view! {
-                                <List>
-                                    {lines
-                                        .into_iter()
-                                        .enumerate()
-                                        .map(|(index, line)| view! { <NeedsAttentionRow line=line index=index /> })
-                                        .collect_view()}
-                                </List>
-                            }.into_any(),
+                            Ok(lines) => view! { <NeedsAttentionGroups lines=lines /> }.into_any(),
                             Err(e) => view! {
                                 <MessageBar intent=MessageBarIntent::Error>
-                                    "Couldn't check what needs attention. " {e.to_string()}
+                                    {format!("Couldn't check what needs attention. {}", friendly_error(&e).sentence())}
                                 </MessageBar>
                             }.into_any(),
                         })}

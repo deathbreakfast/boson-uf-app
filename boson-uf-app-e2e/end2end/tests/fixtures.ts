@@ -8,7 +8,11 @@ export type SeedAuthKind =
   /** Member of the e2e team, which holds Can run on the e2e task type only. */
   | "runner"
   /** No access; asks for it in the request spec. */
-  | "requester";
+  | "requester"
+  /** Kenji, on Media platform: owns (Can edit) the media task type and queue. */
+  | "kenji"
+  /** Ada, on Billing engineering: owns (Can edit) the invoice task type. */
+  | "ada";
 
 export type SeedFixtures = {
   task_name: string;
@@ -21,6 +25,12 @@ export type SeedFixtures = {
   /** Task type the Limits spec fills to its limit. */
   limited_task: string;
   limited_active: number;
+  /** Task type Kenji's team owns. */
+  media_task: string;
+  /** Task type Ada's team owns. */
+  invoice_task: string;
+  /** Queue Kenji's team owns. */
+  media_pool: string;
 };
 
 /** Two failed jobs (all three attempts used), with their failed runs. */
@@ -68,6 +78,12 @@ export async function seedAuth(
     approveRequests?: boolean;
     /** Take back the requester's access to the settings task type first. */
     resetRequester?: boolean;
+    /** Upsert 25 queued jobs and 25 runs for each of the two team-owned task types. */
+    yoursFirst?: boolean;
+    /** Make Runs and Jobs loads filtered to this task type fail until the next seed call. */
+    failListLoads?: string;
+    /** Give (true) or take back (false) the media team's Can edit on its queue. */
+    mediaQueueEdit?: boolean;
   },
 ) {
   const res = await page.request.post("/api/test/seed-data", {
@@ -82,6 +98,9 @@ export async function seedAuth(
       ops: opts?.ops ?? null,
       approve_requests: opts?.approveRequests ?? false,
       reset_requester: opts?.resetRequester ?? false,
+      yours_first: opts?.yoursFirst ?? false,
+      fail_list_loads: opts?.failListLoads ?? null,
+      media_queue_edit: opts?.mediaQueueEdit ?? null,
     },
   });
   expect(res.ok()).toBeTruthy();

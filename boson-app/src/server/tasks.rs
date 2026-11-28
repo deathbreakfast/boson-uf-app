@@ -98,6 +98,12 @@ pub async fn get_task_detail(
         let can_edit = access.task_type(&task_name, "Edit").await;
         let mut summary = build_task_summary(backend, desc).await?;
         summary.access = access.task_type_label(&task_name).await.to_string();
+        let mut ownership = super::access::Ownership::from_context();
+        summary.owner = Some(ownership.task_type_owner(&task_name).await);
+        summary.yours = ownership
+            .owned(crate::permissions::BOSON_TASK_TYPE_KIND)
+            .await
+            .contains(&task_name);
         if !can_view {
             super::access::redact_task(&mut summary);
             return Ok(Some(TaskDetail {
@@ -358,6 +364,20 @@ pub async fn get_tasks_datatable_page(
         super::access::ReaderAccess::from_context()
             .label_tasks(&mut tasks)
             .await;
+        let mut ownership = super::access::Ownership::from_context();
+        let owned = ownership
+            .owned(crate::permissions::BOSON_TASK_TYPE_KIND)
+            .await;
+        for task in &mut tasks {
+            task.yours = owned.contains(&task.name);
+            task.owner = Some(ownership.task_type_owner(&task.name).await);
+        }
+        let tasks = boson_backend::order_owned(
+            tasks,
+            &owned,
+            boson_backend::ShowMode::from_request(&request),
+            |t| t.name.as_str(),
+        );
 
         let total_count: Option<u64> = if request.offset == 0 {
             Some(tasks.len() as u64)

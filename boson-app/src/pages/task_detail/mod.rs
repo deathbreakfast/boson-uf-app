@@ -11,7 +11,7 @@ use orbital::components::{
 use orbital::primitives::{
     Body1, Breadcrumb, BreadcrumbButton, BreadcrumbDivider, BreadcrumbItem, CardHeader,
     CardHeaderAction, Flex, FlexAlign, Link, Tab, TabList, Table, TableBody, TableCell,
-    TableCellLayout, TableHeader, TableHeaderCell, TableRow,
+    TableCellLayout, TableHeader, TableHeaderCell, TableRow, Timestamp, TimestampStyle,
 };
 
 use uf_product::access::{AccessCard, AccessDenied};
@@ -150,7 +150,7 @@ fn RecentRunsCard(
                                                 <TableCell><TableCellLayout><Link href=href>{short}</Link></TableCellLayout></TableCell>
                                                 <TableCell><TableCellLayout><RunStatusBadge status=r.status /></TableCellLayout></TableCell>
                                                 <TableCell><TableCellLayout>{r.attempt}</TableCellLayout></TableCell>
-                                                <TableCell><TableCellLayout>{r.started_at}</TableCellLayout></TableCell>
+                                                <TableCell><TableCellLayout><Timestamp value=r.started_at style=TimestampStyle::Relative /></TableCellLayout></TableCell>
                                                 <TableCell><TableCellLayout>{duration}</TableCellLayout></TableCell>
                                             </TableRow>
                                         }

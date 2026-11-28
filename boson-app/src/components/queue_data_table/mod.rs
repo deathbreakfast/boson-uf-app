@@ -4,7 +4,7 @@ mod mapper;
 
 use std::collections::HashSet;
 
-use boson_backend::JobsTab;
+use boson_backend::{JobsTab, ShowMode};
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 use leptos_router::NavigateOptions;
@@ -15,7 +15,9 @@ use orbital::primitives::{
     DataTableToolbarConfig, PagingMode,
 };
 
-use crate::components::{BosonDataTableShell, BosonDataTableSkeletonRows};
+use crate::components::{
+    track_load_error, BosonDataTableShell, BosonDataTableSkeletonRows, LoadError, TableLoadError,
+};
 
 pub use columns::{failed_table_columns, FAILED_TABLE_COLUMNS};
 use columns::{queue_table_columns, JOBS_TABLE_COLUMNS};
@@ -35,6 +37,9 @@ pub fn JobsDataTable(
     /// Bump to reload the rows in place.
     #[prop(optional)]
     refresh_signal: Option<Signal<u32>>,
+    /// Whose jobs come first.
+    #[prop(optional)]
+    show: ShowMode,
 ) -> impl IntoView {
     let navigate = use_navigate();
 
@@ -45,8 +50,16 @@ pub fn JobsDataTable(
         );
     });
 
+    let load_error: LoadError = RwSignal::new(None);
+    let retry = RwSignal::new(0u32);
+    let on_retry = Callback::new(move |()| retry.update(|n| *n += 1));
+    let refresh = Signal::derive(move || {
+        refresh_signal
+            .map_or(0, |s| s.get())
+            .wrapping_add(retry.get())
+    });
     let data_source = DataTableSource::Server {
-        fetcher: build_jobs_fetcher(tab, rows),
+        fetcher: track_load_error(build_jobs_fetcher(tab, rows, show), load_error),
         page_size: QUEUE_TABLE_PAGE_SIZE,
     };
 
@@ -76,7 +89,7 @@ pub fn JobsDataTable(
                 columns=queue_table_columns(cancel_pending, on_cancel)
                 sortable=false
                 locale=locale
-                refresh_signal=refresh_signal.unwrap_or_else(|| Signal::derive(|| 0u32))
+                refresh_signal=refresh
                 toolbar_config=DataTableToolbarConfig {
                     quick_search: true,
                     // P7: filter panel motion deferred — DataTableFilterPanel owns Popover
@@ -101,12 +114,16 @@ pub fn JobsDataTable(
                     <BosonDataTableSkeletonRows columns=JOBS_TABLE_COLUMNS />
                 </DataTableLoadingView>
                 <DataTableEmptyView slot>
-                    <EmptyState message=empty_message description=empty_description />
+                    <TableLoadError error=load_error noun="jobs" on_retry=on_retry>
+                        <EmptyState message=empty_message description=empty_description />
+                    </TableLoadError>
                 </DataTableEmptyView>
                 <DataTableNoResultsView slot>
-                    <MessageBar intent=MessageBarIntent::Info>
-                        "No jobs match your search or filters."
-                    </MessageBar>
+                    <TableLoadError error=load_error noun="jobs" on_retry=on_retry>
+                        <MessageBar intent=MessageBarIntent::Info>
+                            "No jobs match your search or filters."
+                        </MessageBar>
+                    </TableLoadError>
                 </DataTableNoResultsView>
             </DataTable>
         </BosonDataTableShell>

@@ -12,7 +12,7 @@ use orbital::components::{
 use orbital::primitives::{
     Button, ButtonAppearance, DataRecord, DataTable, DataTableColumnDef, DataTableEmptyView,
     DataTableFeatures, DataTableRowModel, DataTableSource, Flex, FlexAlign, FlexJustify, FlexWrap,
-    Link, MessageBar, MessageBarIntent, PagingMode,
+    Link, MessageBar, MessageBarIntent, PagingMode, Timestamp, TimestampStyle,
 };
 
 use uf_product::access::{AccessCard, AccessDenied};
@@ -20,7 +20,8 @@ use uf_product::access::{AccessCard, AccessDenied};
 use super::purge_dialog::PurgeDialog;
 use super::QueueStateBadge;
 use crate::components::{
-    no_toolbar, row_model, text_cell, BosonCardContent, BosonHelpCardHeader, JobStatusBadge,
+    no_toolbar, row_model, text_cell, timestamp_column, BosonCardContent, BosonHelpCardHeader,
+    JobStatusBadge,
 };
 use crate::permissions::{denied_resource, queue_ref};
 use crate::server::{
@@ -120,18 +121,14 @@ fn job_columns() -> Vec<DataTableColumnDef> {
         DataTableColumnDef::new("status", "Status")
             .with_sortable(false)
             .with_cell_view(status_view),
-        DataTableColumnDef::new("waited", "Enqueued").with_sortable(false),
+        timestamp_column("waited", "Enqueued", TimestampStyle::Relative),
     ]
 }
 
 fn job_rows(jobs: &[JobSummary]) -> Vec<DataTableRowModel> {
-    let now = chrono::Utc::now();
     jobs.iter()
         .map(|j| {
-            let waited = chrono::DateTime::parse_from_rfc3339(&j.created_at).map_or_else(
-                |_| j.created_at.clone(),
-                |t| format!("{} ago", boson_backend::wait_label(t.into(), now)),
-            );
+            let waited = j.created_at.clone();
             row_model(
                 &j.job_id,
                 &[
@@ -173,18 +170,14 @@ fn QueueStats(
     }
 }
 
-fn paused_sentence(summary: &QueueSummary) -> String {
+/// Who paused the queue ("Paused by Ines") and when, for the paused bar.
+fn paused_by(summary: &QueueSummary) -> (String, Option<chrono::DateTime<chrono::Utc>>) {
     let who = summary
         .paused_by
         .as_deref()
         .filter(|w| !w.is_empty())
         .map_or_else(|| "Paused".to_string(), |w| format!("Paused by {w}"));
-    let when = summary
-        .paused_at
-        .map_or_else(String::new, |t| format!(" at {} UTC", t.format("%H:%M")));
-    format!(
-        "{who}{when}. Waiting jobs stay put; running jobs finish. New jobs still join the queue."
-    )
+    (who, summary.paused_at)
 }
 
 /// Header, tabs and the selected tab for a loaded queue.
@@ -209,7 +202,7 @@ fn QueueOverview(
     let paused = summary.state == QueueStateDto::Paused;
     let name = summary.name.clone();
     let jobs = RwSignal::new(job_rows(&detail.jobs));
-    let paused_bar = paused.then(|| paused_sentence(&summary));
+    let paused_bar = paused.then(|| paused_by(&summary));
     let title = name.clone();
     let owner = format!("Owner: {}", summary.owner);
     let all_jobs_href = boson_backend::boson_queue_jobs_path(&name);
@@ -287,8 +280,8 @@ fn QueueOverview(
 fn QueueOverviewBody(
     /// Numbers to show.
     summary: QueueSummary,
-    /// The paused sentence, when the queue is paused.
-    paused_bar: Option<String>,
+    /// Who paused the queue and when, when it is paused.
+    paused_bar: Option<(String, Option<chrono::DateTime<chrono::Utc>>)>,
     /// Waiting and running job rows.
     jobs: RwSignal<Vec<DataTableRowModel>>,
     /// Link to every job of this queue.
@@ -298,9 +291,15 @@ fn QueueOverviewBody(
 ) -> impl IntoView {
     view! {
         <Flex vertical=true gap=SpacingSize::Size240.flex_gap()>
-            {paused_bar.map(|text| view! {
+            {paused_bar.map(|(who, at)| view! {
                 <div data-testid="queue-paused-bar">
-                    <MessageBar intent=MessageBarIntent::Warning>{text}</MessageBar>
+                    <MessageBar intent=MessageBarIntent::Warning>
+                        <span>
+                            {who}
+                            {at.map(|at| view! { " at " <Timestamp value=at style=TimestampStyle::Time /> })}
+                            ". Waiting jobs stay put; running jobs finish. New jobs still join the queue."
+                        </span>
+                    </MessageBar>
                 </div>
             })}
 
@@ -450,7 +449,7 @@ pub fn BosonQueueDetailPage() -> impl IntoView {
                 resume_queue(queue).await
             };
             if let Err(e) = result {
-                action_error.set(Some(e.to_string()));
+                action_error.set(Some(crate::errors::friendly_error(&e).sentence()));
             }
             busy.set(false);
             refresh.update(|n| *n += 1);
@@ -498,7 +497,7 @@ pub fn BosonQueueDetailPage() -> impl IntoView {
                             }.into_any(),
                             None => view! {
                                 <MessageBar intent=MessageBarIntent::Error>
-                                    <Body1>{format!("Couldn't load this queue. {e}")}</Body1>
+                                    <Body1>{format!("Couldn't load this queue. {}", crate::errors::friendly_error(&e).sentence())}</Body1>
                                 </MessageBar>
                             }.into_any(),
                         },

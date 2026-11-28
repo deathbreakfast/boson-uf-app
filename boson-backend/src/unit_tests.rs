@@ -50,6 +50,7 @@ fn sample_task(name: &str) -> TaskSummary {
         runs_total: 0,
         success_rate_pct: None,
         owner: None,
+        yours: false,
         access: String::new(),
     }
 }
@@ -1041,4 +1042,167 @@ fn parse_multiplier_field_happy_path() {
 fn parse_multiplier_field_rejects_zero_sad() {
     assert!(parse_multiplier_field("0").is_err());
     assert!(parse_multiplier_field("inf").is_err());
+}
+
+/// Drive an async fn whose futures never wait (the in-memory reads below).
+fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+    let mut fut = std::pin::pin!(fut);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    match fut.as_mut().poll(&mut cx) {
+        std::task::Poll::Ready(out) => out,
+        std::task::Poll::Pending => panic!("in-memory read waited"),
+    }
+}
+
+/// 250 jobs in creation order, task `mine` on every third one, `theirs` on the rest.
+fn owned_jobs() -> Vec<Job> {
+    let base = Utc.with_ymd_and_hms(2026, 11, 20, 9, 0, 0).unwrap();
+    (0..250)
+        .map(|i| {
+            let task = if i % 3 == 0 { "mine" } else { "theirs" };
+            let mut j = sample_job_core(&format!("job-{i:04}"), task, JobStatus::Queued);
+            j.created_at = base + chrono::Duration::seconds(i);
+            j
+        })
+        .collect()
+}
+
+/// Page through `all` the way the jobs server fn does, returning job ids in page order.
+fn page_owned(all: &[Job], mode: ShowMode, owned: &[String], limit: u32) -> Vec<Vec<String>> {
+    let mut pages = Vec::new();
+    let mut request = PageRequest {
+        offset: 0,
+        limit,
+        filter: Some(FilterQuery {
+            items: vec![FilterRuleParam {
+                field: SHOW_FIELD.into(),
+                operator: "is".into(),
+                value: DataValue::Text(mode.key().into()),
+            }],
+            logic: FilterLogicWire::And,
+        }),
+        ..PageRequest::default()
+    };
+    loop {
+        let start = match jobs_part_start(&request, mode, !owned.is_empty()) {
+            PartStart::At(at) => at,
+            PartStart::Offset(_) => panic!("cursor didn't fit"),
+        };
+        let scan = block_on(scan_parts(
+            start,
+            ShowMode::from_request(&request),
+            limit as usize,
+            |j: &Job| owned.contains(&j.task_name),
+            |j: &Job| boson_core::JobKey::from(j),
+            |_part, after: Option<boson_core::JobKey>, n| {
+                let rows: Vec<Job> = all
+                    .iter()
+                    .filter(|j| {
+                        after
+                            .as_ref()
+                            .is_none_or(|k| (j.created_at, &j.job_id) > (k.created_at, &k.id))
+                    })
+                    .take(n)
+                    .cloned()
+                    .collect();
+                async move { rows }
+            },
+        ));
+        let page = jobs_page_from_scan(scan, &request, limit, None);
+        pages.push(page.items.iter().map(|j| j.job_id.clone()).collect());
+        let Some(cursor) = page.next_cursor else {
+            break;
+        };
+        request.offset += limit;
+        request.cursor = Some(cursor);
+    }
+    pages
+}
+
+#[test]
+fn yours_first_pages_owned_rows_first_in_order_happy_path() {
+    let all = owned_jobs();
+    let owned = vec!["mine".to_string()];
+    let pages = page_owned(&all, ShowMode::YoursFirst, &owned, 20);
+    let ids: Vec<String> = pages.concat();
+    let mine: Vec<String> = all
+        .iter()
+        .filter(|j| j.task_name == "mine")
+        .map(|j| j.job_id.clone())
+        .collect();
+    let theirs: Vec<String> = all
+        .iter()
+        .filter(|j| j.task_name != "mine")
+        .map(|j| j.job_id.clone())
+        .collect();
+    assert_eq!(ids.len(), 250);
+    assert_eq!(&ids[..mine.len()], mine.as_slice());
+    assert_eq!(&ids[mine.len()..], theirs.as_slice());
+    assert!(pages.iter().rev().skip(1).all(|p| p.len() == 20));
+}
+
+#[test]
+fn only_yours_hides_other_rows_and_everyones_keeps_order_happy_path() {
+    let all = owned_jobs();
+    let owned = vec!["mine".to_string()];
+    let only: Vec<String> = page_owned(&all, ShowMode::OnlyYours, &owned, 25).concat();
+    assert_eq!(only.len(), 84);
+    assert!(only
+        .iter()
+        .all(|id| { all.iter().any(|j| j.job_id == *id && j.task_name == "mine") }));
+    let every: Vec<String> = page_owned(&all, ShowMode::Everyones, &owned, 25).concat();
+    let usual: Vec<String> = all.iter().map(|j| j.job_id.clone()).collect();
+    assert_eq!(every, usual);
+}
+
+#[test]
+fn yours_first_with_nothing_owned_keeps_usual_order_sad_path() {
+    let all = owned_jobs();
+    let first: Vec<String> = page_owned(&all, ShowMode::YoursFirst, &[], 30).concat();
+    let usual: Vec<String> = all.iter().map(|j| j.job_id.clone()).collect();
+    assert_eq!(first, usual);
+    let only: Vec<String> = page_owned(&all, ShowMode::OnlyYours, &[], 30).concat();
+    assert_eq!(only, usual);
+}
+
+#[test]
+fn show_mode_keys_round_trip() {
+    for mode in [
+        ShowMode::YoursFirst,
+        ShowMode::OnlyYours,
+        ShowMode::Everyones,
+    ] {
+        assert_eq!(ShowMode::from_key(mode.key()), mode);
+    }
+    assert_eq!(ShowMode::from_key("nonsense"), ShowMode::YoursFirst);
+    assert_eq!(
+        ShowMode::from_request(&PageRequest::default()),
+        ShowMode::YoursFirst
+    );
+}
+
+#[test]
+fn order_owned_keeps_each_part_in_order() {
+    let rows = vec![("a", 1), ("b", 2), ("a", 3), ("c", 4)];
+    let owned = vec!["c".to_string(), "a".to_string()];
+    let first = order_owned(rows.clone(), &owned, ShowMode::YoursFirst, |r| r.0);
+    assert_eq!(first, vec![("a", 1), ("a", 3), ("c", 4), ("b", 2)]);
+    let only = order_owned(rows, &owned, ShowMode::OnlyYours, |r| r.0);
+    assert_eq!(only, vec![("a", 1), ("a", 3), ("c", 4)]);
+}
+
+#[test]
+fn show_caption_names_teams() {
+    let two = vec![
+        "Media platform".to_string(),
+        "Billing engineering".to_string(),
+    ];
+    assert_eq!(
+        show_caption(ShowMode::OnlyYours, "queues", &two),
+        "Only yours: queues owned by Media platform and Billing engineering."
+    );
+    assert_eq!(
+        show_caption(ShowMode::OnlyYours, "queues", &[]),
+        "Your teams own no queues here, so this shows everyone's."
+    );
 }

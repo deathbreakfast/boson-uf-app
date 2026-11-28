@@ -1,4 +1,4 @@
-//! Short labels shared by the Boson tables: ids, counts, durations and waits.
+//! Short labels shared by the Boson tables: ids, counts and durations.
 
 /// Last four characters of an id after "…"; ids of four characters or fewer show whole.
 pub fn short_id(id: &str) -> String {
@@ -44,17 +44,6 @@ pub fn format_seconds(ms: Option<i64>) -> String {
     )
 }
 
-/// How long something has waited, at a glance: "45 s", "6 min", "3 h", "2 d".
-pub fn format_waited(ms: i64) -> String {
-    let secs = ms.max(0) / 1000;
-    match secs {
-        0..=59 => format!("{secs} s"),
-        60..=3_599 => format!("{} min", secs / 60),
-        3_600..=172_799 => format!("{} h", secs / 3_600),
-        _ => format!("{} d", secs / 86_400),
-    }
-}
-
 /// "3 of 3" when the most attempts is known, else just the attempt.
 pub fn format_attempts(attempt: i32, max_attempts: Option<u32>) -> String {
     max_attempts.map_or_else(|| attempt.to_string(), |max| format!("{attempt} of {max}"))
@@ -75,8 +64,6 @@ mod tests {
         assert_eq!(format_seconds(Some(30_000)), "30.0 s");
         assert_eq!(format_seconds(Some(1_849)), "1.8 s");
         assert_eq!(format_seconds(None), "-");
-        assert_eq!(format_waited(6 * 60_000 + 5_000), "6 min");
-        assert_eq!(format_waited(-5), "0 s");
         assert_eq!(format_attempts(3, Some(3)), "3 of 3");
         assert_eq!(format_attempts(2, None), "2");
     }
