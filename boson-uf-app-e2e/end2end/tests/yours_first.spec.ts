@@ -10,6 +10,14 @@ async function open(page: Page, path: string) {
   await waitForHydrated(page);
 }
 
+/** The Owner value on one Tasks list card. */
+function ownerValue(table: Locator, name: string): Locator {
+  return table
+    .getByTestId(`data-table-list-card-${name}`)
+    .locator(".orbital-data-table__list-card-field", { hasText: "Owner" })
+    .locator(".orbital-data-table__list-card-value");
+}
+
 /** Ids from the `<prefix><id>` test ids inside `scope`, in page order. */
 async function idsByPrefix(scope: Locator, prefix: string): Promise<string[]> {
   return scope
@@ -38,9 +46,8 @@ test.describe("pw-boson-yours-first", () => {
     });
     const kenjiOrder = await idsByPrefix(table, "data-table-list-card-");
     expect(kenjiOrder[0]).toBe(media);
-    await expect(
-      table.getByTestId(`data-table-list-card-${media}`).getByTestId("boson-yours"),
-    ).toHaveText("Yours");
+    // List cards show plain text, so the owner reads "… · Yours" there.
+    await expect(ownerValue(table, media)).toHaveText("Media platform · Yours");
 
     await seedAuth(page, "ada");
     await open(page, "/boson/tasks");

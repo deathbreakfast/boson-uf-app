@@ -80,8 +80,11 @@ test.describe("pw-boson-stories", () => {
 
     // Her team's task type leads the Tasks list, marked Yours.
     await open(page, "/boson/tasks");
-    const card = page.getByTestId(`data-table-list-card-${task}`);
-    await expect(card.getByTestId("boson-yours")).toBeVisible({ timeout: 60_000 });
+    const owner = page
+      .getByTestId(`data-table-list-card-${task}`)
+      .locator(".orbital-data-table__list-card-field", { hasText: "Owner" })
+      .locator(".orbital-data-table__list-card-value");
+    await expect(owner).toHaveText("Billing engineering · Yours", { timeout: 60_000 });
 
     await open(page, `/boson/tasks/${encodeURIComponent(task)}?tab=settings`);
     const attempts = page.getByTestId("task-config-max-attempts").locator("input");
@@ -106,8 +109,11 @@ test.describe("pw-boson-stories", () => {
       "Your teams own no task types here, so this shows everyone's.",
       { timeout: 60_000 },
     );
-    await expect(page.getByTestId("boson-tasks-data-table").getByText("No access").first())
-      .toBeVisible({ timeout: 60_000 });
+    await expect(
+      page
+        .getByTestId(`data-table-list-card-${seeded.fixtures.task_name}`)
+        .locator(".orbital-data-table__list-card-value", { hasText: "No access" }),
+    ).toBeVisible({ timeout: 60_000 });
 
     await open(page, "/boson/jobs");
     await expect(page.getByText(shortId(seeded.fixtures.job_id)).first()).toBeVisible({
